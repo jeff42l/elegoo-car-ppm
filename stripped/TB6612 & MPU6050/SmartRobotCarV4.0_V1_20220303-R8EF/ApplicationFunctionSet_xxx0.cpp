@@ -85,6 +85,8 @@ Application_xxx Application_SmartRobotCarxxx0;
 const long PPMInterval = 50;
 unsigned long PPMPreviousMillis = 0;
 
+int pDir[4] = {direction_void,0,direction_void,0};
+
 // PPM channel layout (update for your situation)
 #define THROTTLE        3
 #define STEER           1
@@ -293,7 +295,6 @@ void ApplicationFunctionSet::ApplicationFunctionSet_RGB(void)
 void ApplicationFunctionSet::ApplicationFunctionSet_RadioControl(void) {
   if (Application_SmartRobotCarxxx0.Functional_Mode == RadioControl_mode) {
 
-
     // Interval at which the PPM is updated
     unsigned long currentMillis = millis();
     if (currentMillis - PPMPreviousMillis >= PPMInterval) {
@@ -302,67 +303,84 @@ void ApplicationFunctionSet::ApplicationFunctionSet_RadioControl(void) {
       // Acquiring channel values
       short throttle = ppm.read_channel(THROTTLE);
       short steer = ppm.read_channel(STEER);
-      short speed = ppm.read_channel(SPEED);
+      short speedmax = ppm.read_channel(SPEED);
 
-      // calculate proportional movement and max speed
-      // values should center at 1500, low is 1000, high is 2000
-      float max_speed_percent = (speed - 1000) / 1000.0;
-      bool reverse = throttle > 1520;
-      bool forward = throttle < 1480;
-      short requested_throttle = abs(throttle - 1500);
-      short adjusted_throttle = constrain(((requested_throttle / 500.0) * max_speed_percent * 255), 0, 255);
-
-      bool left = steer < 1520;
-      bool right = steer > 1480; 
-      short turn_speed = abs(steer - 1500);
-
+      bool reverse = throttle > 1525;
+      bool forward = throttle < 1425;
+      bool left = steer < 1525;
+      bool right = steer > 1475; 
+      
       bool motA_dir = direction_void;
       bool motB_dir = direction_void;
       short motA_spd = 0;
       short motB_spd = 0;
+      bool motorgo = false;
 
-      if ((left || right) && !(forward || reverse)) {
-        // spinning in place
-        short adjusted_turn_speed = (turn_speed / 500.0) * max_speed_percent * 255;
-        motA_spd = adjusted_turn_speed; 
-        motB_spd = adjusted_turn_speed;
+      if (forward || reverse || left || right) {
+        motorgo = true;
 
-        if (left) {
-          motA_dir = direction_just;
-          motB_dir = direction_back;
-        } else if (right) {
-          motA_dir = direction_back;
-          motB_dir = direction_just;
-        }
-      } else if (forward || reverse) {
-        if (forward) {
-          motA_dir = direction_just;
-          motB_dir = direction_just;
-        } else if (reverse) {
-          motA_dir = direction_back;
-          motB_dir = direction_back;
-        }
+        // calculate proportional movement and max speed
+        // values should center at 1500, low is 1000, high is 2000
+        float max_speed_percent = (speedmax - 1000) / 1000.0;
+        short requested_throttle = abs(throttle - 1500);
+        short adjusted_throttle = constrain(((requested_throttle / 500.0) * max_speed_percent * 255), 0, 255);
+
+        short turn_speed = abs(steer - 1500);
+
         
-        // proportional turning while motating
-        float turn_ratio = 1.0 - (turn_speed / 500.0);
-        if (right) {
-          motA_spd = adjusted_throttle * turn_ratio;
-          motB_spd = adjusted_throttle;
-        } else if (left) {
-          motA_spd = adjusted_throttle;
-          motB_spd = adjusted_throttle * turn_ratio;
-        } else {
-          motA_spd = adjusted_throttle;
-          motB_spd = adjusted_throttle;
+
+        if ((left || right) && !(forward || reverse)) {
+          // spinning in place
+          short adjusted_turn_speed = (turn_speed / 500.0) * max_speed_percent * 255;
+          motA_spd = adjusted_turn_speed; 
+          motB_spd = adjusted_turn_speed;
+
+          if (left) {
+            motA_dir = direction_just;
+            motB_dir = direction_back;
+          } else if (right) {
+            motA_dir = direction_back;
+            motB_dir = direction_just;
+          }
+        } else if (forward || reverse) {
+          if (forward) {
+            motA_dir = direction_just;
+            motB_dir = direction_just;
+          } else if (reverse) {
+            motA_dir = direction_back;
+            motB_dir = direction_back;
+          }
+          
+          // proportional turning while motating
+          float turn_ratio = 1.0 - (turn_speed / 500.0);
+          if (right) {
+            motA_spd = adjusted_throttle * turn_ratio;
+            motB_spd = adjusted_throttle;
+          } else if (left) {
+            motA_spd = adjusted_throttle;
+            motB_spd = adjusted_throttle * turn_ratio;
+          } else {
+            motA_spd = adjusted_throttle;
+            motB_spd = adjusted_throttle;
+          }
         }
+
+        motA_spd = constrain(motA_spd,0,255);
+        motB_spd = constrain(motB_spd,0,255);
       }
 
-      motA_spd = constrain(motA_spd,0,255);
-      motB_spd = constrain(motB_spd,0,255);
+      if (pDir[0] != motA_dir || pDir[1] != motA_spd || pDir[2] != motB_dir || pDir[3] != motB_spd) {
+        pDir[0] = motA_dir;
+        pDir[1] = motA_spd;
+        pDir[2] = motB_dir;
+        pDir[3] = motB_spd;
 
-      AppMotor.DeviceDriverSet_Motor_control(/*direction_A*/ motA_dir, /*speed_A*/ motA_spd,
-                                    /*direction_B*/ motB_dir, /*speed_B*/ motB_spd, /*controlED*/ control_enable); //Motor control
-
+        if (motorgo) {
+          AppMotor.DeviceDriverSet_Motor_control(motA_dir, motA_spd, motB_dir, motB_spd, control_enable); //Motor control
+        } else {
+          AppMotor.DeviceDriverSet_Motor_control(direction_void, 0, direction_void, 0, false); //Motor control 
+        }
+      }
     }
   }
 }
