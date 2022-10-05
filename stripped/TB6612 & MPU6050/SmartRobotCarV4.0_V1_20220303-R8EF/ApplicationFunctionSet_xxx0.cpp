@@ -85,6 +85,8 @@ struct Application_xxx
 };
 Application_xxx Application_SmartRobotCarxxx0;
 
+#define motorMax 255 //PWM(Motor speed/Speed)
+
 /* support for PPM radio control */
 const long PPMInterval = 50;
 unsigned long PPMPreviousMillis = 0;
@@ -108,7 +110,6 @@ void ApplicationFunctionSet::ApplicationFunctionSet_Init(void)
   Serial.begin(9600);
   AppVoltage.DeviceDriverSet_Voltage_Init();
   AppMotor.DeviceDriverSet_Motor_Init();
-  AppServo.DeviceDriverSet_Servo_Init(90);
   AppKey.DeviceDriverSet_Key_Init();
   AppRBG_LED.DeviceDriverSet_RBGLED_Init(20);
   res_error = AppMPU6050getdata.MPU6050_dveInit();
@@ -332,7 +333,7 @@ void ApplicationFunctionSet::ApplicationFunctionSet_RadioControl(void) {
           // values should center at 1500, low is 1000, high is 2000
           float max_speed_percent = (speedmax - 1000) / 1000.0;
           short requested_throttle = abs(throttle - 1500);
-          short adjusted_throttle = constrain(((requested_throttle / 500.0) * max_speed_percent * 255), 0, 255);
+          short adjusted_throttle = constrain(((requested_throttle / 500.0) * max_speed_percent * motorMax), 0, motorMax);
 
           short turn_speed = abs(steer - 1500);
 
@@ -340,7 +341,7 @@ void ApplicationFunctionSet::ApplicationFunctionSet_RadioControl(void) {
 
           if ((left || right) && !(forward || reverse)) {
             // spinning in place
-            short adjusted_turn_speed = (turn_speed / 500.0) * max_speed_percent * 255;
+            short adjusted_turn_speed = (turn_speed / 500.0) * max_speed_percent * motorMax;
             motA_spd = adjusted_turn_speed; 
             motB_spd = adjusted_turn_speed;
 
@@ -379,7 +380,7 @@ void ApplicationFunctionSet::ApplicationFunctionSet_RadioControl(void) {
         short rightthrottle = ppm.read_channel(RIGHTY);
 
         short requested_left = abs(leftthrottle - 1500);
-        short adjusted_left = constrain(((requested_left / 500.0) * 255), 0, 255);
+        short adjusted_left = constrain(((requested_left / 500.0) * motorMax), 0, motorMax);
         if (adjusted_left > 20) {
           motorgo = true;
           if (leftthrottle < 1475) {
@@ -390,7 +391,7 @@ void ApplicationFunctionSet::ApplicationFunctionSet_RadioControl(void) {
           motB_spd = adjusted_left;
         }
         short requested_right = abs(rightthrottle - 1500);
-        short adjusted_right = constrain(((requested_right / 500.0) * 255), 0, 255);
+        short adjusted_right = constrain(((requested_right / 500.0) * motorMax), 0, motorMax);
         if (adjusted_right > 20) {
           motorgo = true;
           if (rightthrottle < 1475) {
@@ -402,8 +403,8 @@ void ApplicationFunctionSet::ApplicationFunctionSet_RadioControl(void) {
         }
       }
 
-      motA_spd = constrain(motA_spd,0,255);
-      motB_spd = constrain(motB_spd,0,255);
+      motA_spd = constrain(motA_spd,0,motorMax);
+      motB_spd = constrain(motB_spd,0,motorMax);
 
       if (pDir[0] != motA_dir || pDir[1] != motA_spd || pDir[2] != motB_dir || pDir[3] != motB_spd) {
         pDir[0] = motA_dir;
@@ -412,7 +413,7 @@ void ApplicationFunctionSet::ApplicationFunctionSet_RadioControl(void) {
         pDir[3] = motB_spd;
 
         if (motorgo) {
-          AppMotor.DeviceDriverSet_Motor_control(motA_dir, motA_spd, motB_dir, motB_spd, control_enable); //Motor control
+          AppMotor.DeviceDriverSet_Motor_control(motA_dir, motA_spd, motB_dir, motB_spd, true); //Motor control
         } else {
           AppMotor.DeviceDriverSet_Motor_control(direction_void, 0, direction_void, 0, false); //Motor control 
         }
