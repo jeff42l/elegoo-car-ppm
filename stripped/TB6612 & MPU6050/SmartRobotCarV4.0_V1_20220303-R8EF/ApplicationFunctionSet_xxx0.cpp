@@ -2,6 +2,10 @@
  * @Author: ELEGOO original / Shields modified
  * @Description: Smart Robot Car V4.0
  */
+
+//TODO: add dead zone variable 
+
+
 #include <avr/wdt.h>
 //#include <hardwareSerial.h>
 #include <stdio.h>
@@ -88,9 +92,14 @@ unsigned long PPMPreviousMillis = 0;
 int pDir[4] = {direction_void,0,direction_void,0};
 
 // PPM channel layout (update for your situation)
-#define THROTTLE        3
-#define STEER           1
-#define SPEED           8     // trim-pot on the (front left edge trim)
+#define RIGHTX          1
+#define RIGHTY          2
+#define LEFTY           3
+#define LEFTX           4
+#define RIGHTROCK       5
+#define RIGHTMOM        6
+#define LEFTROCK        7
+#define LEFTPOT         8
 
 
 void ApplicationFunctionSet::ApplicationFunctionSet_Init(void)
@@ -105,13 +114,10 @@ void ApplicationFunctionSet::ApplicationFunctionSet_Init(void)
   res_error = AppMPU6050getdata.MPU6050_dveInit();
   AppMPU6050getdata.MPU6050_calibration();
 
-  // while (Serial.read() >= 0)
-  // {
-  //   /*Clear serial port buffer...*/
-  // }
   Application_SmartRobotCarxxx0.Functional_Mode = RadioControl_mode;
-  // start PPM traffic on pin A1
-  ppm.begin(A1, false);
+  
+  // start PPM traffic on pin A0 -- note if you have a non-standard-issue cable, you may need to adjust this pin value
+  ppm.begin(A0, false);
 }
 
 /*
@@ -300,74 +306,104 @@ void ApplicationFunctionSet::ApplicationFunctionSet_RadioControl(void) {
     if (currentMillis - PPMPreviousMillis >= PPMInterval) {
       PPMPreviousMillis = currentMillis;
 
-      // Acquiring channel values
-      short throttle = ppm.read_channel(THROTTLE);
-      short steer = ppm.read_channel(STEER);
-      short speedmax = ppm.read_channel(SPEED);
+      short drivemode = ppm.read_channel(RIGHTROCK);
 
-      bool reverse = throttle > 1525;
-      bool forward = throttle < 1425;
-      bool left = steer < 1525;
-      bool right = steer > 1475; 
-      
       bool motA_dir = direction_void;
       bool motB_dir = direction_void;
       short motA_spd = 0;
       short motB_spd = 0;
       bool motorgo = false;
+      
+      if (drivemode <= 1600) {
+        // Acquiring channel values
+        short throttle = ppm.read_channel(LEFTY);
+        short steer = ppm.read_channel(RIGHTX);
+        short speedmax = ppm.read_channel(LEFTPOT);
 
-      if (forward || reverse || left || right) {
-        motorgo = true;
+        bool reverse = throttle > 1525;
+        bool forward = throttle < 1425;
+        bool left = steer < 1525;
+        bool right = steer > 1475; 
 
-        // calculate proportional movement and max speed
-        // values should center at 1500, low is 1000, high is 2000
-        float max_speed_percent = (speedmax - 1000) / 1000.0;
-        short requested_throttle = abs(throttle - 1500);
-        short adjusted_throttle = constrain(((requested_throttle / 500.0) * max_speed_percent * 255), 0, 255);
+        if (forward || reverse || left || right) {
+          motorgo = true;
 
-        short turn_speed = abs(steer - 1500);
+          // calculate proportional movement and max speed
+          // values should center at 1500, low is 1000, high is 2000
+          float max_speed_percent = (speedmax - 1000) / 1000.0;
+          short requested_throttle = abs(throttle - 1500);
+          short adjusted_throttle = constrain(((requested_throttle / 500.0) * max_speed_percent * 255), 0, 255);
 
-        
+          short turn_speed = abs(steer - 1500);
 
-        if ((left || right) && !(forward || reverse)) {
-          // spinning in place
-          short adjusted_turn_speed = (turn_speed / 500.0) * max_speed_percent * 255;
-          motA_spd = adjusted_turn_speed; 
-          motB_spd = adjusted_turn_speed;
-
-          if (left) {
-            motA_dir = direction_just;
-            motB_dir = direction_back;
-          } else if (right) {
-            motA_dir = direction_back;
-            motB_dir = direction_just;
-          }
-        } else if (forward || reverse) {
-          if (forward) {
-            motA_dir = direction_just;
-            motB_dir = direction_just;
-          } else if (reverse) {
-            motA_dir = direction_back;
-            motB_dir = direction_back;
-          }
           
-          // proportional turning while motating
-          float turn_ratio = 1.0 - (turn_speed / 500.0);
-          if (right) {
-            motA_spd = adjusted_throttle * turn_ratio;
-            motB_spd = adjusted_throttle;
-          } else if (left) {
-            motA_spd = adjusted_throttle;
-            motB_spd = adjusted_throttle * turn_ratio;
-          } else {
-            motA_spd = adjusted_throttle;
-            motB_spd = adjusted_throttle;
+
+          if ((left || right) && !(forward || reverse)) {
+            // spinning in place
+            short adjusted_turn_speed = (turn_speed / 500.0) * max_speed_percent * 255;
+            motA_spd = adjusted_turn_speed; 
+            motB_spd = adjusted_turn_speed;
+
+            if (left) {
+              motA_dir = direction_just;
+              motB_dir = direction_back;
+            } else if (right) {
+              motA_dir = direction_back;
+              motB_dir = direction_just;
+            }
+          } else if (forward || reverse) {
+            if (forward) {
+              motA_dir = direction_just;
+              motB_dir = direction_just;
+            } else if (reverse) {
+              motA_dir = direction_back;
+              motB_dir = direction_back;
+            }
+            
+            // proportional turning while motating
+            float turn_ratio = 1.0 - (turn_speed / 500.0);
+            if (right) {
+              motA_spd = adjusted_throttle * turn_ratio;
+              motB_spd = adjusted_throttle;
+            } else if (left) {
+              motA_spd = adjusted_throttle;
+              motB_spd = adjusted_throttle * turn_ratio;
+            } else {
+              motA_spd = adjusted_throttle;
+              motB_spd = adjusted_throttle;
+            }
           }
         }
+      } else {
+        short leftthrottle = ppm.read_channel(LEFTY);
+        short rightthrottle = ppm.read_channel(RIGHTY);
 
-        motA_spd = constrain(motA_spd,0,255);
-        motB_spd = constrain(motB_spd,0,255);
+        short requested_left = abs(leftthrottle - 1500);
+        short adjusted_left = constrain(((requested_left / 500.0) * 255), 0, 255);
+        if (adjusted_left > 20) {
+          motorgo = true;
+          if (leftthrottle < 1475) {
+            motB_dir = direction_just;
+          } else if (leftthrottle > 1525) {
+            motB_dir = direction_back;
+          }        
+          motB_spd = adjusted_left;
+        }
+        short requested_right = abs(rightthrottle - 1500);
+        short adjusted_right = constrain(((requested_right / 500.0) * 255), 0, 255);
+        if (adjusted_right > 20) {
+          motorgo = true;
+          if (rightthrottle < 1475) {
+            motA_dir = direction_just;
+          } else if (rightthrottle > 1525) {
+            motA_dir = direction_back;
+          }        
+          motA_spd = adjusted_right;
+        }
       }
+
+      motA_spd = constrain(motA_spd,0,255);
+      motB_spd = constrain(motB_spd,0,255);
 
       if (pDir[0] != motA_dir || pDir[1] != motA_spd || pDir[2] != motB_dir || pDir[3] != motB_spd) {
         pDir[0] = motA_dir;
