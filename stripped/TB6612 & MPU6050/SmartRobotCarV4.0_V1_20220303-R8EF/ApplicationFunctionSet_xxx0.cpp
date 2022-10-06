@@ -322,9 +322,17 @@ void ApplicationFunctionSet::ApplicationFunctionSet_RadioControl(void) {
         short speedmax = ppm.read_channel(LEFTPOT);
 
         bool reverse = throttle > 1525;
-        bool forward = throttle < 1425;
-        bool left = steer < 1525;
-        bool right = steer > 1475; 
+        bool forward = throttle < 1475;
+        bool left = steer < 1475;
+        bool right = steer > 1525; 
+
+        /*
+        Serial.print("throttle(");
+        Serial.print(throttle);
+        Serial.print(") steer(");
+        Serial.print(steer);
+        Serial.println(") ");
+        */
 
         if (forward || reverse || left || right) {
           motorgo = true;
@@ -333,15 +341,15 @@ void ApplicationFunctionSet::ApplicationFunctionSet_RadioControl(void) {
           // values should center at 1500, low is 1000, high is 2000
           float max_speed_percent = (speedmax - 1000) / 1000.0;
           short requested_throttle = abs(throttle - 1500);
-          short adjusted_throttle = constrain(((requested_throttle / 500.0) * max_speed_percent * motorMax), 0, motorMax);
-
+          float throttle_percent = requested_throttle / 500.0;
+          short adjusted_throttle = constrain(throttle_percent * max_speed_percent * motorMax, 0, motorMax);
           short turn_speed = abs(steer - 1500);
-
-          
 
           if ((left || right) && !(forward || reverse)) {
             // spinning in place
-            short adjusted_turn_speed = (turn_speed / 500.0) * max_speed_percent * motorMax;
+            float steer_percent = turn_speed / 500.0;
+            short adjusted_turn_speed = constrain(steer_percent * max_speed_percent * motorMax, 0, motorMax);
+            
             motA_spd = adjusted_turn_speed; 
             motB_spd = adjusted_turn_speed;
 
