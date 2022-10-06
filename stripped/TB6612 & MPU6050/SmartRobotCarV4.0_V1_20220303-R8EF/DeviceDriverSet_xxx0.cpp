@@ -204,8 +204,8 @@ void DeviceDriverSet_Motor::DeviceDriverSet_Motor_Test(void)
 /*
  Motor_control：AB / movement direction and speed
 */
-void DeviceDriverSet_Motor::DeviceDriverSet_Motor_control(boolean direction_A, uint8_t speed_A, //Group A motor parameters
-                                                          boolean direction_B, uint8_t speed_B, //Group B motor parameters
+void DeviceDriverSet_Motor::DeviceDriverSet_Motor_control(short direction_A, uint8_t speed_A, //Group A motor parameters
+                                                          short direction_B, uint8_t speed_B, //Group B motor parameters
                                                           boolean controlED                     //AB enable setting (true)
                                                           )                                     //Motor control
 {

@@ -92,8 +92,8 @@ public:
 #if _Test_DeviceDriverSet
   void DeviceDriverSet_Motor_Test(void);
 #endif
-  void DeviceDriverSet_Motor_control(boolean direction_A, uint8_t speed_A, //Group A motor parameters
-                                     boolean direction_B, uint8_t speed_B, //Group B motor parameters
+  void DeviceDriverSet_Motor_control(short direction_A, uint8_t speed_A, //Group A motor parameters
+                                     short direction_B, uint8_t speed_B, //Group B motor parameters
                                      boolean controlED                     //AB enable setting (true)
   );                                                                       //motor control
 private:
@@ -110,9 +110,9 @@ private:
 #define PIN_Motor_STBY 3
 public:
 #define speed_Max 255
-#define direction_just true
-#define direction_back false
-#define direction_void 3
+#define direction_just 0
+#define direction_back 1
+#define direction_void 2
 
 #define Duration_enable true
 #define Duration_disable false
