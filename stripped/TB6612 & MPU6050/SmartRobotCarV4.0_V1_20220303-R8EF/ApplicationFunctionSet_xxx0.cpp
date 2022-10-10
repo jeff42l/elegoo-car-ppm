@@ -103,6 +103,14 @@ int pDir[4] = {direction_void,0,direction_void,0};
 #define LEFTROCK        7
 #define LEFTPOT         8
 
+#define leftBlinkPin    12
+#define rightBlinkPin   13
+
+bool leftBlinker = false;
+bool rightBlinker = false;
+short blinkState = HIGH;
+unsigned long blinkMillis = 0;
+short blinkInterval = 250;
 
 void ApplicationFunctionSet::ApplicationFunctionSet_Init(void)
 {
@@ -118,7 +126,10 @@ void ApplicationFunctionSet::ApplicationFunctionSet_Init(void)
   Application_SmartRobotCarxxx0.Functional_Mode = RadioControl_mode;
   
   // start PPM traffic on pin A0 -- note if you have a non-standard-issue cable, you may need to adjust this pin value
-  ppm.begin(A0, false);
+  ppm.begin(A1, false);
+
+  pinMode(leftBlinkPin, OUTPUT);
+  pinMode(rightBlinkPin, OUTPUT);
 }
 
 /*
@@ -323,8 +334,8 @@ void ApplicationFunctionSet::ApplicationFunctionSet_RadioControl(void) {
 
         bool reverse = throttle > 1525;
         bool forward = throttle < 1475;
-        bool left = steer < 1475;
-        bool right = steer > 1525; 
+        bool left = steer < 1470;
+        bool right = steer > 1530; 
 
         /*
         Serial.print("throttle(");
@@ -333,6 +344,9 @@ void ApplicationFunctionSet::ApplicationFunctionSet_RadioControl(void) {
         Serial.print(steer);
         Serial.println(") ");
         */
+        
+        leftBlinker = left;
+        rightBlinker = right;
 
         if (forward || reverse || left || right) {
           motorgo = true;
@@ -344,7 +358,10 @@ void ApplicationFunctionSet::ApplicationFunctionSet_RadioControl(void) {
           float throttle_percent = requested_throttle / 500.0;
           short adjusted_throttle = constrain(throttle_percent * max_speed_percent * motorMax, 0, motorMax);
           short turn_speed = abs(steer - 1500);
-
+          if (turn_speed < 30) {
+            turn_speed = 0;
+          }
+          
           if ((left || right) && !(forward || reverse)) {
             // spinning in place
             float steer_percent = turn_speed / 500.0;
@@ -430,6 +447,38 @@ void ApplicationFunctionSet::ApplicationFunctionSet_RadioControl(void) {
   }
 }
 
+void ApplicationFunctionSet::ApplicationFunctionSet_Blinkenlights(void)
+{
+  // use our turn signals, we're polite after all
+  if (leftBlinker || rightBlinker) {
+    unsigned long currentMillis = millis();
+    if (currentMillis - blinkMillis >= blinkInterval) {
+      blinkMillis = currentMillis;
+      
+      if (leftBlinker) {
+        digitalWrite(leftBlinkPin, blinkState); 
+      } else if (rightBlinker) {
+        digitalWrite(rightBlinkPin, blinkState);
+      }  
+      
+      // toggle the blink state
+      if (blinkState == HIGH) {
+        blinkState = LOW;
+      } else {
+        blinkState = HIGH;
+      }
+    }
+
+  }
+
+  // turn them off when not in use
+  if (!leftBlinker) {
+    digitalWrite(leftBlinkPin, LOW);
+  }
+  if (!rightBlinker) {
+    digitalWrite(rightBlinkPin, LOW);
+  }
+}
 
 /*Key command*/
 void ApplicationFunctionSet::ApplicationFunctionSet_KeyCommand(void)

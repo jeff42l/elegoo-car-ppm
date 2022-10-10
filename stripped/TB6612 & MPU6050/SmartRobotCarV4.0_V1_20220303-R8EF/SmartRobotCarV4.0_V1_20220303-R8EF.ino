@@ -20,6 +20,7 @@ void loop()
   Application_FunctionSet.ApplicationFunctionSet_KeyCommand();
   Application_FunctionSet.ApplicationFunctionSet_RGB();
   Application_FunctionSet.ApplicationFunctionSet_RadioControl();
+  Application_FunctionSet.ApplicationFunctionSet_Blinkenlights();
 
   Application_FunctionSet.ApplicationFunctionSet_SerialPortDataAnalysis();
 
