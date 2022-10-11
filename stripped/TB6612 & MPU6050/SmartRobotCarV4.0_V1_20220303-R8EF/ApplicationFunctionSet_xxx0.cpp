@@ -449,35 +449,57 @@ void ApplicationFunctionSet::ApplicationFunctionSet_RadioControl(void) {
 
 void ApplicationFunctionSet::ApplicationFunctionSet_Blinkenlights(void)
 {
-  // use our turn signals, we're polite after all
-  if (leftBlinker || rightBlinker) {
-    unsigned long currentMillis = millis();
-    if (currentMillis - blinkMillis >= blinkInterval) {
-      blinkMillis = currentMillis;
-      
-      if (leftBlinker) {
-        digitalWrite(leftBlinkPin, blinkState); 
-      } else if (rightBlinker) {
-        digitalWrite(rightBlinkPin, blinkState);
-      }  
-      
-      // toggle the blink state
-      if (blinkState == HIGH) {
-        blinkState = LOW;
-      } else {
-        blinkState = HIGH;
+  short blinkmode = ppm.read_channel(LEFTROCK);
+  if (blinkmode < 1400) {
+    // use our turn signals, we're polite after all
+    if (leftBlinker || rightBlinker) {
+      unsigned long currentMillis = millis();
+      if (currentMillis - blinkMillis >= blinkInterval) {
+        blinkMillis = currentMillis;
+        
+        if (leftBlinker) {
+          digitalWrite(leftBlinkPin, blinkState); 
+        } else if (rightBlinker) {
+          digitalWrite(rightBlinkPin, blinkState);
+        }  
+        
+        // toggle the blink state
+        if (blinkState == HIGH) {
+          blinkState = LOW;
+        } else {
+          blinkState = HIGH;
+        }
       }
     }
 
-  }
-
-  // turn them off when not in use
-  if (!leftBlinker) {
+    // turn them off when not in use
+    if (!leftBlinker) {
+      digitalWrite(leftBlinkPin, LOW);
+    }
+    if (!rightBlinker) {
+      digitalWrite(rightBlinkPin, LOW);
+    }
+  } else if (blinkmode > 1600) {
+    // party lights
+    unsigned long currentMillis = millis();
+    if (currentMillis - blinkMillis >= blinkInterval/2) {
+      blinkMillis = currentMillis;
+      
+      if (blinkState == HIGH) {
+        blinkState = LOW;
+        digitalWrite(leftBlinkPin, HIGH); 
+        digitalWrite(rightBlinkPin, LOW);
+      } else {
+        blinkState = HIGH;
+        digitalWrite(leftBlinkPin, LOW); 
+        digitalWrite(rightBlinkPin, HIGH);
+      }  
+    }
+  } else {
     digitalWrite(leftBlinkPin, LOW);
-  }
-  if (!rightBlinker) {
     digitalWrite(rightBlinkPin, LOW);
   }
+
 }
 
 /*Key command*/
