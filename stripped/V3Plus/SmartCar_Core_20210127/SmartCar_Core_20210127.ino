@@ -74,8 +74,8 @@ void radio_control() {
 
       bool reverse = throttle > 1525;
       bool forward = throttle < 1475;
-      bool left = steer < 1475;
-      bool right = steer > 1525; 
+      bool left = steer < 1470;
+      bool right = steer > 1530; 
 
       /*
       Serial.print("throttle(");
@@ -95,6 +95,9 @@ void radio_control() {
         float throttle_percent = requested_throttle / 500.0;
         short adjusted_throttle = constrain(throttle_percent * max_speed_percent * motorMax, 0, motorMax);
         short turn_speed = abs(steer - 1500);
+        if (turn_speed < 30) {
+          turn_speed = 0;
+        }
 
         if ((left || right) && !(forward || reverse)) {
           // spinning in place
