@@ -103,15 +103,24 @@ bool ApplicationFunctionSet_SmartRobotCarLeaveTheGround(void);
 void ApplicationFunctionSet_SmartRobotCarLinearMotionControl(SmartRobotCarMotionControl direction, uint8_t directionRecord, uint8_t speed, uint8_t Kp, uint8_t UpperLimit);
 void ApplicationFunctionSet_SmartRobotCarMotionControl(SmartRobotCarMotionControl direction, uint8_t is_speed);
 
+#define motorMax 255 //PWM(Motor speed/Speed)
+
 /* support for PPM radio control */
 bool PPMRunning = false;
 const long PPMInterval = 50;
 unsigned long PPMPreviousMillis = 0;
 
+int pDir[4] = {direction_void,0,direction_void,0};
+
 // PPM channel layout (update for your situation)
-#define THROTTLE        3
-#define STEER           1
-#define SPEED           8     // trim-pot on the (front left edge trim)
+#define RIGHTX          1
+#define RIGHTY          2
+#define LEFTY           3
+#define LEFTX           4
+#define RIGHTROCK       5
+#define RIGHTMOM        6
+#define LEFTROCK        7
+#define LEFTPOT         8
 
 
 void ApplicationFunctionSet::ApplicationFunctionSet_Init(void)
@@ -579,156 +588,129 @@ void ApplicationFunctionSet::ApplicationFunctionSet_RadioControl(void) {
     if (currentMillis - PPMPreviousMillis >= PPMInterval) {
       PPMPreviousMillis = currentMillis;
 
-      // Acquiring channel values
-      short throttle = ppm.read_channel(THROTTLE);
-      short steer = ppm.read_channel(STEER);
-      short speed = ppm.read_channel(SPEED);
-
-      // calculate proportional movement and max speed
-      // values should center at 1500, low is 1000, high is 2000
-      float max_speed_percent = (speed - 1000) / 1000.0;
-      bool reverse = throttle > 1520;
-      bool forward = throttle < 1480;
-      short requested_throttle = abs(throttle - 1500);
-      short adjusted_throttle = constrain(((requested_throttle / 500.0) * max_speed_percent * 255), 0, 255);
-
-      bool left = steer < 1520;
-      bool right = steer > 1480; 
-      short turn_speed = abs(steer - 1500);
+      short drivemode = ppm.read_channel(RIGHTROCK);
 
       bool motA_dir = direction_void;
       bool motB_dir = direction_void;
       short motA_spd = 0;
       short motB_spd = 0;
+      bool motorgo = false;
+      
+      if (drivemode <= 1600) {
+        // Acquiring channel values
+        short throttle = ppm.read_channel(LEFTY);
+        short steer = ppm.read_channel(RIGHTX);
+        short speedmax = ppm.read_channel(LEFTPOT);
 
-      if ((left || right) && !(forward || reverse)) {
-        // spinning in place
-        short adjusted_turn_speed = (turn_speed / 500.0) * max_speed_percent * 255;
-        motA_spd = adjusted_turn_speed; 
-        motB_spd = adjusted_turn_speed;
+        bool reverse = throttle > 1525;
+        bool forward = throttle < 1475;
+        bool left = steer < 1470;
+        bool right = steer > 1530; 
 
-        if (left) {
-          motA_dir = direction_just;
-          motB_dir = direction_back;
-        } else if (right) {
-          motA_dir = direction_back;
-          motB_dir = direction_just;
+        /*
+        Serial.print("throttle(");
+        Serial.print(throttle);
+        Serial.print(") steer(");
+        Serial.print(steer);
+        Serial.println(") ");
+        */
+
+        if (forward || reverse || left || right) {
+          motorgo = true;
+
+          // calculate proportional movement and max speed
+          // values should center at 1500, low is 1000, high is 2000
+          float max_speed_percent = (speedmax - 1000) / 1000.0;
+          short requested_throttle = abs(throttle - 1500);
+          float throttle_percent = requested_throttle / 500.0;
+          short adjusted_throttle = constrain(throttle_percent * max_speed_percent * motorMax, 0, motorMax);
+          short turn_speed = abs(steer - 1500);
+          if (turn_speed < 30) {
+            turn_speed = 0;
+          }
+
+          if ((left || right) && !(forward || reverse)) {
+            // spinning in place
+            float steer_percent = turn_speed / 500.0;
+            short adjusted_turn_speed = constrain(steer_percent * max_speed_percent * motorMax, 0, motorMax);
+            
+            motA_spd = adjusted_turn_speed; 
+            motB_spd = adjusted_turn_speed;
+
+            if (left) {
+              motA_dir = direction_just;
+              motB_dir = direction_back;
+            } else if (right) {
+              motA_dir = direction_back;
+              motB_dir = direction_just;
+            }
+          } else if (forward || reverse) {
+            if (forward) {
+              motA_dir = direction_just;
+              motB_dir = direction_just;
+            } else if (reverse) {
+              motA_dir = direction_back;
+              motB_dir = direction_back;
+            }
+            
+            // proportional turning while motating
+            float turn_ratio = 1.0 - (turn_speed / 500.0);
+            if (right) {
+              motA_spd = adjusted_throttle * turn_ratio;
+              motB_spd = adjusted_throttle;
+            } else if (left) {
+              motA_spd = adjusted_throttle;
+              motB_spd = adjusted_throttle * turn_ratio;
+            } else {
+              motA_spd = adjusted_throttle;
+              motB_spd = adjusted_throttle;
+            }
+          }
         }
-      } else if (forward || reverse) {
-        if (forward) {
-          motA_dir = direction_just;
-          motB_dir = direction_just;
-        } else if (reverse) {
-          motA_dir = direction_back;
-          motB_dir = direction_back;
+      } else {
+        short leftthrottle = ppm.read_channel(LEFTY);
+        short rightthrottle = ppm.read_channel(RIGHTY);
+
+        short requested_left = abs(leftthrottle - 1500);
+        short adjusted_left = constrain(((requested_left / 500.0) * motorMax), 0, motorMax);
+        if (adjusted_left > 20) {
+          motorgo = true;
+          if (leftthrottle < 1475) {
+            motB_dir = direction_just;
+          } else if (leftthrottle > 1525) {
+            motB_dir = direction_back;
+          }        
+          motB_spd = adjusted_left;
         }
-        
-        // proportional turning while motating
-        float turn_ratio = 1.0 - (turn_speed / 500.0);
-        if (right) {
-          motA_spd = adjusted_throttle * turn_ratio;
-          motB_spd = adjusted_throttle;
-        } else if (left) {
-          motA_spd = adjusted_throttle;
-          motB_spd = adjusted_throttle * turn_ratio;
+        short requested_right = abs(rightthrottle - 1500);
+        short adjusted_right = constrain(((requested_right / 500.0) * motorMax), 0, motorMax);
+        if (adjusted_right > 20) {
+          motorgo = true;
+          if (rightthrottle < 1475) {
+            motA_dir = direction_just;
+          } else if (rightthrottle > 1525) {
+            motA_dir = direction_back;
+          }        
+          motA_spd = adjusted_right;
+        }
+      }
+
+      motA_spd = constrain(motA_spd,0,motorMax);
+      motB_spd = constrain(motB_spd,0,motorMax);
+
+      if (pDir[0] != motA_dir || pDir[1] != motA_spd || pDir[2] != motB_dir || pDir[3] != motB_spd) {
+        pDir[0] = motA_dir;
+        pDir[1] = motA_spd;
+        pDir[2] = motB_dir;
+        pDir[3] = motB_spd;
+
+        if (motorgo) {
+          AppMotor.DeviceDriverSet_Motor_control(motA_dir, motA_spd, motB_dir, motB_spd, true); //Motor control
         } else {
-          motA_spd = adjusted_throttle;
-          motB_spd = adjusted_throttle;
+          AppMotor.DeviceDriverSet_Motor_control(direction_void, 0, direction_void, 0, false); //Motor control 
         }
       }
-
-      motA_spd = constrain(motA_spd,0,255);
-      motB_spd = constrain(motB_spd,0,255);
-
-      AppMotor.DeviceDriverSet_Motor_control(/*direction_A*/ motA_dir, /*speed_A*/ motA_spd,
-                                    /*direction_B*/ motB_dir, /*speed_B*/ motB_spd, /*controlED*/ control_enable); //Motor control
-
     }
-  }
-}
-
-/*Line tracking mode*/
-void ApplicationFunctionSet::ApplicationFunctionSet_Tracking(void)
-{
-  return;
-  
-  static boolean timestamp = true;
-  static boolean BlindDetection = true;
-  static unsigned long MotorRL_time = 0;
-  if (Application_SmartRobotCarxxx0.Functional_Mode == TraceBased_mode)
-  {
-    if (Car_LeaveTheGround == false) //Check if the car leaves the ground
-    {
-      ApplicationFunctionSet_SmartRobotCarMotionControl(stop_it, 0);
-      return;
-    }
-
-    // int getAnaloguexxx_L = AppITR20001.DeviceDriverSet_ITR20001_getAnaloguexxx_L();
-    // int getAnaloguexxx_M = AppITR20001.DeviceDriverSet_ITR20001_getAnaloguexxx_M();
-    // int getAnaloguexxx_R = AppITR20001.DeviceDriverSet_ITR20001_getAnaloguexxx_R();
-#if _Test_print
-    static unsigned long print_time = 0;
-    if (millis() - print_time > 500)
-    {
-      print_time = millis();
-      Serial.print("ITR20001_getAnaloguexxx_L=");
-      Serial.println(getAnaloguexxx_L);
-      Serial.print("ITR20001_getAnaloguexxx_M=");
-      Serial.println(getAnaloguexxx_M);
-      Serial.print("ITR20001_getAnaloguexxx_R=");
-      Serial.println(getAnaloguexxx_R);
-    }
-#endif
-    if (function_xxx(TrackingData_M, TrackingDetection_S, TrackingDetection_E))
-    {
-      /*Achieve straight and uniform speed movement*/
-      ApplicationFunctionSet_SmartRobotCarMotionControl(Forward, 100);
-      timestamp = true;
-      BlindDetection = true;
-    }
-    else if (function_xxx(TrackingData_R, TrackingDetection_S, TrackingDetection_E))
-    {
-      /*Turn right*/
-      ApplicationFunctionSet_SmartRobotCarMotionControl(Right, 100);
-      timestamp = true;
-      BlindDetection = true;
-    }
-    else if (function_xxx(TrackingData_L, TrackingDetection_S, TrackingDetection_E))
-    {
-      /*Turn left*/
-      ApplicationFunctionSet_SmartRobotCarMotionControl(Left, 100);
-      timestamp = true;
-      BlindDetection = true;
-    }
-    else ////The car is not on the black line. execute Blind scan
-    {
-      if (timestamp == true) //acquire timestamp
-      {
-        timestamp = false;
-        MotorRL_time = millis();
-        ApplicationFunctionSet_SmartRobotCarMotionControl(stop_it, 0);
-      }
-      /*Blind Detection*/
-      if ((function_xxx((millis() - MotorRL_time), 0, 200) || function_xxx((millis() - MotorRL_time), 1600, 2000)) && BlindDetection == true)
-      {
-        ApplicationFunctionSet_SmartRobotCarMotionControl(Right, 100);
-      }
-      else if (((function_xxx((millis() - MotorRL_time), 200, 1600))) && BlindDetection == true)
-      {
-        ApplicationFunctionSet_SmartRobotCarMotionControl(Left, 100);
-      }
-      else if ((function_xxx((millis() - MotorRL_time), 3000, 3500))) // Blind Detection ...s ?
-      {
-        BlindDetection = false;
-        ApplicationFunctionSet_SmartRobotCarMotionControl(stop_it, 0);
-      }
-    }
-  }
-  else if (false == timestamp)
-  {
-    BlindDetection = true;
-    timestamp = true;
-    MotorRL_time = 0;
   }
 }
 
@@ -1866,262 +1848,6 @@ void ApplicationFunctionSet::ApplicationFunctionSet_IRrecv(void)
 /*Data analysis on serial port*/
 void ApplicationFunctionSet::ApplicationFunctionSet_SerialPortDataAnalysis(void)
 {
-  static String SerialPortData = "";
-  uint8_t c = "";
-  if (Serial.available() > 0)
-  {
-    while (c != '}' && Serial.available() > 0)
-    {
-      // while (Serial.available() == 0)//Forcibly wait for a frame of data to be received
-      //   ;
-      c = Serial.read();
-      SerialPortData += (char)c;
-    }
-  }
-  if (c == '}') //Data frame tail check
-  {
-#if _Test_print
-    Serial.println(SerialPortData);
-#endif
-    // if (true == SerialPortData.equals("{f}") || true == SerialPortData.equals("{b}") || true == SerialPortData.equals("{l}") || true == SerialPortData.equals("{r}"))
-    // {
-    //   Serial.print(SerialPortData);
-    //   SerialPortData = "";
-    //   return;
-    // }
-    // if (true == SerialPortData.equals("{Factory}") || true == SerialPortData.equals("{WA_NO}") || true == SerialPortData.equals("{WA_OK}")) 
-    // {
-    //   SerialPortData = "";
-    //   return;
-    // }
-    StaticJsonDocument<200> doc;                                       //Declare a JsonDocument object
-    DeserializationError error = deserializeJson(doc, SerialPortData); //Deserialize JSON data from the serial data buffer
-    SerialPortData = "";
-    if (error)
-    {
-      Serial.println("error:deserializeJson");
-    }
-    else if (!error) //Check if the deserialization is successful
-    {
-      int control_mode_N = doc["N"];
-      char *temp = doc["H"];
-      CommandSerialNumber = temp; //Get the serial number of the new command
-
-      /*Please view the following code blocks in conjunction with the Communication protocol for Smart Robot Car.pdf*/
-      switch (control_mode_N)
-      {
-      case 1: /*<Command：N 1> motor control mode */
-        Application_SmartRobotCarxxx0.Functional_Mode = CMD_MotorControl;
-        CMD_is_MotorSelection = doc["D1"];
-        CMD_is_MotorSpeed = doc["D2"];
-        CMD_is_MotorDirection = doc["D3"];
-
-#if _is_print
-        Serial.print('{' + CommandSerialNumber + "_ok}");
-#endif
-        break;
-
-      case 2:                                                                     /*<Command：N 2> */
-        Application_SmartRobotCarxxx0.Functional_Mode = CMD_CarControl_TimeLimit; /*Car movement direction and speed control：Time limited mode*/
-        CMD_is_CarDirection = doc["D1"];
-        CMD_is_CarSpeed = doc["D2"];
-        CMD_is_CarTimer = doc["T"];
-        Application_SmartRobotCarxxx0.CMD_CarControl_Millis = millis();
-#if _is_print
-        //Serial.print('{' + CommandSerialNumber + "_ok}");
-#endif
-        break;
-
-      case 3:                                                                       /*<Command：N 3> */
-        Application_SmartRobotCarxxx0.Functional_Mode = CMD_CarControl_NoTimeLimit; /*Car movement direction and speed control：No time limited mode*/
-        CMD_is_CarDirection = doc["D1"];
-        CMD_is_CarSpeed = doc["D2"];
-#if _is_print
-        Serial.print('{' + CommandSerialNumber + "_ok}");
-#endif
-        break;
-
-      case 4:                                                                   /*<Command：N 4> */
-        Application_SmartRobotCarxxx0.Functional_Mode = CMD_MotorControl_Speed; /*motor control:Control motor speed mode*/
-        CMD_is_MotorSpeed_L = doc["D1"];
-        CMD_is_MotorSpeed_R = doc["D2"];
-#if _is_print
-        Serial.print('{' + CommandSerialNumber + "_ok}");
-#endif
-        break;
-      case 5:                                                             /*<Command：N 5> */
-        Application_SmartRobotCarxxx0.Functional_Mode = CMD_ServoControl; /*servo motor control*/
-        CMD_is_Servo = doc["D1"];
-        CMD_is_Servo_angle = doc["D2"];
-#if _is_print
-        Serial.print('{' + CommandSerialNumber + "_ok}");
-#endif
-        break;
-      case 7:                                                                          /*<Command：N 7> */
-        Application_SmartRobotCarxxx0.Functional_Mode = CMD_LightingControl_TimeLimit; /*Lighting control:Time limited mode*/
-
-        CMD_is_LightingSequence = doc["D1"]; //Lighting (Left, front, right, back and center)
-        CMD_is_LightingColorValue_R = doc["D2"];
-        CMD_is_LightingColorValue_G = doc["D3"];
-        CMD_is_LightingColorValue_B = doc["D4"];
-        CMD_is_LightingTimer = doc["T"];
-        Application_SmartRobotCarxxx0.CMD_LightingControl_Millis = millis();
-#if _is_print
-        //Serial.print('{' + CommandSerialNumber + "_ok}");
-#endif
-        break;
-
-      case 8:                                                                            /*<Command：N 8> */
-        Application_SmartRobotCarxxx0.Functional_Mode = CMD_LightingControl_NoTimeLimit; /*Lighting control:No time limited mode*/
-
-        CMD_is_LightingSequence = doc["D1"]; //Lighting (Left, front, right, back and center)
-        CMD_is_LightingColorValue_R = doc["D2"];
-        CMD_is_LightingColorValue_G = doc["D3"];
-        CMD_is_LightingColorValue_B = doc["D4"];
-#if _is_print
-        Serial.print('{' + CommandSerialNumber + "_ok}");
-#endif
-        break;
-
-      case 21: /*<Command：N 21>：ultrasonic sensor: detect obstacle distance */
-        CMD_UltrasoundModuleStatus_xxx0(doc["D1"]);
-#if _is_print
-        //Serial.print('{' + CommandSerialNumber + "_ok}");
-#endif
-        break;
-
-      case 22: /*<Command：N 22>：IR sensor：for line tracking mode */
-        CMD_TraceModuleStatus_xxx0(doc["D1"]);
-#if _is_print
-        //Serial.print('{' + CommandSerialNumber + "_ok}");
-#endif
-        break;
-
-      case 23: /*<Command：N 23>：Check if the car leaves the ground */
-        if (true == Car_LeaveTheGround)
-        {
-#if _is_print
-          Serial.print('{' + CommandSerialNumber + "_false}");
-#endif
-        }
-        else if (false == Car_LeaveTheGround)
-        {
-#if _is_print
-          Serial.print('{' + CommandSerialNumber + "_true}");
-#endif
-        }
-        break;
-
-      case 110:                                                                                 /*<Command：N 110> */
-        Application_SmartRobotCarxxx0.Functional_Mode = CMD_ClearAllFunctions_Programming_mode; /*Clear all function:Enter programming mode*/
-#if _is_print
-        Serial.print('{' + CommandSerialNumber + "_ok}");
-#endif
-        break;
-      case 100:                                                                             /*<Command：N 100> */
-        Application_SmartRobotCarxxx0.Functional_Mode = CMD_ClearAllFunctions_Standby_mode; /*Clear all function:Enter standby mode*/
-#if _is_print
-        Serial.print("{ok}");
-        //Serial.print('{' + CommandSerialNumber + "_ok}");
-#endif
-        break;
-
-      case 101: /*<Command：N 101> :remote control to switch the car mode*/
-        if (1 == doc["D1"])
-        {
-          Application_SmartRobotCarxxx0.Functional_Mode = TraceBased_mode;
-        }
-        else if (2 == doc["D1"])
-        {
-          Application_SmartRobotCarxxx0.Functional_Mode = ObstacleAvoidance_mode;
-        }
-        else if (3 == doc["D1"])
-        {
-          Application_SmartRobotCarxxx0.Functional_Mode = Follow_mode;
-        }
-
-#if _is_print
-        Serial.print("{ok}");
-        //Serial.print('{' + CommandSerialNumber + "_ok}");
-#endif
-        break;
-
-      case 105: /*<Command：N 105> :FastLED brightness adjustment control command*/
-        if (1 == doc["D1"] && (CMD_is_FastLED_setBrightness < 250))
-        {
-          CMD_is_FastLED_setBrightness += 5;
-        }
-        else if (2 == doc["D1"] && (CMD_is_FastLED_setBrightness > 0))
-        {
-          CMD_is_FastLED_setBrightness -= 5;
-        }
-        FastLED.setBrightness(CMD_is_FastLED_setBrightness);
-
-#if _Test_print
-        //Serial.print('{' + CommandSerialNumber + "_ok}");
-        Serial.print("{ok}");
-#endif
-        break;
-
-      case 106: /*<Command：N 106> */
-      {
-        uint8_t temp_Set_Servo = doc["D1"];
-        if (temp_Set_Servo > 5 || temp_Set_Servo < 1)
-          return;
-        ApplicationFunctionSet_Servo(temp_Set_Servo);
-      }
-
-#if _is_print
-        //Serial.print('{' + CommandSerialNumber + "_ok}");
-        Serial.print("{ok}");
-#endif
-        break;
-      case 102: /*<Command：N 102> :Rocker control mode command*/
-        Application_SmartRobotCarxxx0.Functional_Mode = Rocker_mode;
-        Rocker_temp = doc["D1"];
-
-        switch (Rocker_temp)
-        {
-        case 1:
-          Application_SmartRobotCarxxx0.Motion_Control = Forward;
-          break;
-        case 2:
-          Application_SmartRobotCarxxx0.Motion_Control = Backward;
-          break;
-        case 3:
-          Application_SmartRobotCarxxx0.Motion_Control = Left;
-          break;
-        case 4:
-          Application_SmartRobotCarxxx0.Motion_Control = Right;
-          break;
-        case 5:
-          Application_SmartRobotCarxxx0.Motion_Control = LeftForward;
-          break;
-        case 6:
-          Application_SmartRobotCarxxx0.Motion_Control = LeftBackward;
-          break;
-        case 7:
-          Application_SmartRobotCarxxx0.Motion_Control = RightForward;
-          break;
-        case 8:
-          Application_SmartRobotCarxxx0.Motion_Control = RightBackward;
-          break;
-        case 9:
-          Application_SmartRobotCarxxx0.Motion_Control = stop_it;
-          Application_SmartRobotCarxxx0.Functional_Mode = Standby_mode;
-          break;
-        default:
-          Application_SmartRobotCarxxx0.Motion_Control = stop_it;
-          break;
-        }
-#if _is_print
-        // Serial.print('{' + CommandSerialNumber + "_ok}");
-#endif
-        break;
-
-      default:
-        break;
-      }
-    }
-  }
+  // purged this to get the program size under control; if you need to do advanced serial debugging, return to OEM code 
+  return;
 }
