@@ -578,8 +578,8 @@ void ApplicationFunctionSet::ApplicationFunctionSet_Rocker(void)
 void ApplicationFunctionSet::ApplicationFunctionSet_RadioControl(void) {
   if (Application_SmartRobotCarxxx0.Functional_Mode == TraceBased_mode) {
     if (!PPMRunning) {
-      // Start the PPM function on PIN A1
-      ppm.begin(A1, false);
+      // Start the PPM function on PIN A0
+      ppm.begin(A0, false);
       PPMRunning = true;
     }
 
