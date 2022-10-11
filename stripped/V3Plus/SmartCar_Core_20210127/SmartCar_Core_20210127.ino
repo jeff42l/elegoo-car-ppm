@@ -77,13 +77,13 @@ void radio_control() {
       bool left = steer < 1470;
       bool right = steer > 1530; 
 
-      /*
+    /*  
       Serial.print("throttle(");
       Serial.print(throttle);
       Serial.print(") steer(");
       Serial.print(steer);
       Serial.println(") ");
-      */
+    */  
       
       if (forward || reverse || left || right) {
         motorgo = true;
@@ -198,15 +198,15 @@ void MotorControl(short right_dir, short right_spd, short left_dir, short left_s
     }
 
     if (left_dir == direction_just) {
-      analogWrite(ENB, left_spd);
+      analogWrite(ENA, left_spd);
       digitalWrite(IN1, HIGH);
       digitalWrite(IN2, LOW);
     } else if (left_dir == direction_back) {
-      analogWrite(ENB, left_spd);
+      analogWrite(ENA, left_spd);
       digitalWrite(IN1, LOW);
       digitalWrite(IN2, HIGH);
     } else if (left_dir == direction_void) {
-      digitalWrite(ENB, LOW);
+      digitalWrite(ENA, LOW);
     }
   } else {
     digitalWrite(ENA, LOW); //Turn off the motor enable pin
@@ -226,10 +226,10 @@ void setup(void)
   pinMode(ENA, OUTPUT);
   pinMode(ENB, OUTPUT);
 
-  pinMode(PIN_A4, INPUT);
+  pinMode(A4, INPUT);
 
   // start PPM traffic on pin A0 -- note if you have a non-standard-issue cable, you may need to adjust this pin value
-  ppm.begin(PIN_A4, false);
+  ppm.begin(A4, false);
 }
 
 void loop(void)
