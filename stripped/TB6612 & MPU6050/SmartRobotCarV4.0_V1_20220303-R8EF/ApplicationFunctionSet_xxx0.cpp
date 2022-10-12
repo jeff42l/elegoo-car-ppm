@@ -126,7 +126,7 @@ void ApplicationFunctionSet::ApplicationFunctionSet_Init(void)
   Application_SmartRobotCarxxx0.Functional_Mode = RadioControl_mode;
   
   // start PPM traffic on pin A0 -- note if you have a non-standard-issue cable, you may need to adjust this pin value
-  ppm.begin(A1, false);
+  ppm.begin(A0, false);
 
   pinMode(leftBlinkPin, OUTPUT);
   pinMode(rightBlinkPin, OUTPUT);
