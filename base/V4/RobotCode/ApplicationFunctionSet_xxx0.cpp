@@ -65,12 +65,12 @@ enum RobotState {
 struct ApplicationState
 {
   RobotState CurrentRobotState; 
-  int CurrentTeamColor;
+  unsigned long CurrentTeamColor;
 };
 ApplicationState CurrentApplication;
 
 /* support for automatic run time in game mode */
-const long automaticRunTime = 30000; // 30 second automatic mode
+const long automaticRunTime = 15000; // 15 second automatic mode
 unsigned long automaticStartTime = 0; // time that automatic mode started
 
 /* maximum speed value that can be sent to motor */
@@ -138,6 +138,37 @@ void ApplicationFunctionSet::ApplicationFunctionSet_Init(void)
   ppm.begin(A0, false);
 }
 
+// Runs the motors as directed by the passed packet
+void RunMotors(MotorControlPacket mcp) {
+  // Don't allow controls to send values outside allowed bounds
+  mcp.motA_spd = constrain(mcp.motA_spd,0,motorMax);
+  mcp.motB_spd = constrain(mcp.motB_spd,0,motorMax);
+
+  // Only send commands to motors if the effective state has changed
+  if (pDir[0] != mcp.motA_dir || pDir[1] != mcp.motA_spd || pDir[2] != mcp.motB_dir || pDir[3] != mcp.motB_spd) {
+    pDir[0] = mcp.motA_dir;
+    pDir[1] = mcp.motA_spd;
+    pDir[2] = mcp.motB_dir;
+    pDir[3] = mcp.motB_spd;
+
+    if (mcp.motorgo) {
+      AppMotor.DeviceDriverSet_Motor_control(mcp.motA_dir, mcp.motA_spd, mcp.motB_dir, mcp.motB_spd, true); //Motor control
+    } else {
+      AppMotor.DeviceDriverSet_Motor_control(direction_void, 0, direction_void, 0, false); //Motor control 
+    }
+  }
+}
+// Stop all motors
+void StopMotors() {
+  MotorControlPacket mcp;
+  mcp.motA_dir = direction_void;
+  mcp.motB_dir = direction_void;
+  mcp.motA_spd = 0;
+  mcp.motB_spd = 0;
+  mcp.motorgo = false;
+
+  RunMotors(mcp);
+}
 
 void AutomaticMode() {
   if (CurrentApplication.CurrentRobotState == Automatic) {
@@ -147,6 +178,14 @@ void AutomaticMode() {
       Consider reducing robot "jitter" by reducing your update frequency; you can do this with a loop that checks the current time against your last update (see the PPM logic in Operator control modes below)
     */
 
+    MotorControlPacket mcp;
+    mcp.motA_dir = direction_back;
+    mcp.motB_dir = direction_just;
+    mcp.motA_spd = 100;
+    mcp.motB_spd = 100;
+    mcp.motorgo = true;
+
+    RunMotors(mcp);
 
   }
 }
@@ -286,10 +325,11 @@ void ApplicationFunctionSet::ApplicationFunctionSet_RGB(void)
         break;
       case /* constant-expression */ Automatic:
         {
+
           // blink in team color
-          AppRBG_LED.DeviceDriverSet_RBGLED_xxx(0 /*Duration*/, 2 /*Traversal_Number*/, CurrentApplication.CurrentTeamColor);
-          delay(30);
-          AppRBG_LED.DeviceDriverSet_RBGLED_xxx(0 /*Duration*/, 2 /*Traversal_Number*/, CurrentApplication.CurrentTeamColor);
+          //TODO: investigate whether this actually holds the processor
+          AppRBG_LED.DeviceDriverSet_RBGLED_xxx(50 /*Duration*/, 2 /*Traversal_Number*/, CurrentApplication.CurrentTeamColor);
+          AppRBG_LED.DeviceDriverSet_RBGLED_xxx(50 /*Duration*/, 2 /*Traversal_Number*/, CRGB::Black);
         
         }
         break;
@@ -304,8 +344,6 @@ void ApplicationFunctionSet::ApplicationFunctionSet_RGB(void)
     }
   }
 }
-
-
 
 // Radio control processing for arcade mode driving
 MotorControlPacket OperatorControl_Arcade() {
@@ -386,6 +424,8 @@ MotorControlPacket OperatorControl_Arcade() {
       }
     }
   }
+
+  return mcp;
 }
 
 // Radio control processing for tank mode operator control
@@ -422,28 +462,11 @@ MotorControlPacket OperatorControl_Tank() {
     }        
     mcp.motA_spd = adjusted_right;
   }
+
+  return mcp;
 }
 
-// Runs the motors as directed by the passed packet
-void RunMotors(MotorControlPacket mcp) {
-  // Don't allow controls to send values outside allowed bounds
-  mcp.motA_spd = constrain(mcp.motA_spd,0,motorMax);
-  mcp.motB_spd = constrain(mcp.motB_spd,0,motorMax);
 
-  // Only send commands to motors if the effective state has changed
-  if (pDir[0] != mcp.motA_dir || pDir[1] != mcp.motA_spd || pDir[2] != mcp.motB_dir || pDir[3] != mcp.motB_spd) {
-    pDir[0] = mcp.motA_dir;
-    pDir[1] = mcp.motA_spd;
-    pDir[2] = mcp.motB_dir;
-    pDir[3] = mcp.motB_spd;
-
-    if (mcp.motorgo) {
-      AppMotor.DeviceDriverSet_Motor_control(mcp.motA_dir, mcp.motA_spd, mcp.motB_dir, mcp.motB_spd, true); //Motor control
-    } else {
-      AppMotor.DeviceDriverSet_Motor_control(direction_void, 0, direction_void, 0, false); //Motor control 
-    }
-  }
-}
 
 // Radio control listener, handles processing for game mode
 void ApplicationFunctionSet::ApplicationFunctionSet_RadioControl(void) {
@@ -466,6 +489,7 @@ void ApplicationFunctionSet::ApplicationFunctionSet_RadioControl(void) {
     // if timer expires, switch to operator mode
     unsigned long currentMillis = millis();
     if (currentMillis - automaticStartTime >= automaticRunTime) {
+      StopMotors();
       CurrentApplication.CurrentRobotState = Operator;
     } 
   } else if (CurrentApplication.CurrentRobotState == Operator) { // Operator (manual) control of bot
@@ -496,35 +520,36 @@ void ApplicationFunctionSet::ApplicationFunctionSet_KeyCommand(void)
   uint8_t get_keyValue;
   static uint8_t temp_keyValue = keyValue_Max;
   AppKey.DeviceDriverSet_key_Get(&get_keyValue);
-
+ 
   if (temp_keyValue != get_keyValue)
   {
-    temp_keyValue = get_keyValue;//Serial.println(get_keyValue);
+    temp_keyValue = get_keyValue;
+    //Serial.println(get_keyValue);
     switch (get_keyValue)
     {
-    case /* constant-expression */ 1:
-      /* code */
-      CurrentApplication.CurrentRobotState = Standby;
-      CurrentApplication.CurrentTeamColor = CRGB::Red;
-      break;
-    case /* constant-expression */ 2:
-      /* code */
-      CurrentApplication.CurrentRobotState = Standby;
-      CurrentApplication.CurrentTeamColor = CRGB::Blue;
-      break;
-    case /* constant-expression */ 3:
-      /* code */
-      CurrentApplication.CurrentRobotState = Operator;
-      CurrentApplication.CurrentTeamColor = CRGB::Red;
-      break;
-    case /* constant-expression */ 4:
-      /* code */
-      CurrentApplication.CurrentRobotState = Operator;
-      CurrentApplication.CurrentTeamColor = CRGB::Blue;
-      break;
-    default:
-
-      break;
+      case 0: 
+        CurrentApplication.CurrentRobotState = Operator;
+        CurrentApplication.CurrentTeamColor = CRGB::Violet;
+        break;
+      case 1:
+        CurrentApplication.CurrentRobotState = Standby;
+        CurrentApplication.CurrentTeamColor = CRGB::Red;
+        break;
+      case 2:
+        CurrentApplication.CurrentRobotState = Standby;
+        CurrentApplication.CurrentTeamColor = CRGB::Blue;
+        break;
+      case 3:
+        CurrentApplication.CurrentRobotState = Operator;
+        CurrentApplication.CurrentTeamColor = CRGB::Red;
+        break;
+      case 4:
+        CurrentApplication.CurrentRobotState = Operator;
+        CurrentApplication.CurrentTeamColor = CRGB::Blue;
+        break;
+      default:
+        StopMotors();
+        break;
     }
   }
 }
