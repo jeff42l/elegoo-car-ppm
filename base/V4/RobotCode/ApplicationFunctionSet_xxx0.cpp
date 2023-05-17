@@ -70,7 +70,7 @@ struct ApplicationState
 ApplicationState CurrentApplication;
 
 /* support for automatic run time in game mode */
-const long automaticRunTime = 15000; // 15 second automatic mode
+const long automaticRunTime = 30000; // 30 second automatic mode
 unsigned long automaticStartTime = 0; // time that automatic mode started
 
 /* maximum speed value that can be sent to motor */
@@ -138,6 +138,14 @@ void ApplicationFunctionSet::ApplicationFunctionSet_Init(void)
   ppm.begin(A0, false);
 }
 
+
+// Used to turn to a specific angle based on accelerometer data
+bool turn_requested = false;
+float turn_target = 0; 
+unsigned long move_end = 0;
+short move_requested = 0;
+short move_speed = 0;
+
 // Runs the motors as directed by the passed packet
 void RunMotors(MotorControlPacket mcp) {
   // Don't allow controls to send values outside allowed bounds
@@ -158,8 +166,25 @@ void RunMotors(MotorControlPacket mcp) {
     }
   }
 }
+
+float GetYaw() {
+  float yawn;
+  if (!AppMPU6050getdata.MPU6050_dveGetEulerAngles(&yawn)) {
+    return yawn;
+  } else {
+    return 0;
+  }
+}
+unsigned int GetUltrasonic() {
+  unsigned int ultra;
+  AppULTRASONIC.DeviceDriverSet_ULTRASONIC_Get(&ultra); 
+  return ultra;
+}
+
 // Stop all motors
-void StopMotors() {
+void Move_Stop() {
+  turn_requested = false;
+
   MotorControlPacket mcp;
   mcp.motA_dir = direction_void;
   mcp.motB_dir = direction_void;
@@ -170,24 +195,100 @@ void StopMotors() {
   RunMotors(mcp);
 }
 
-void AutomaticMode() {
-  if (CurrentApplication.CurrentRobotState == Automatic) {
-    /* 
-      Put custom automatic control code here.
-      Mind that it's running in a loop, so you will need to basically "check sensors, instruct robot" 
-      Consider reducing robot "jitter" by reducing your update frequency; you can do this with a loop that checks the current time against your last update (see the PPM logic in Operator control modes below)
-    */
 
-    MotorControlPacket mcp;
-    mcp.motA_dir = direction_back;
-    mcp.motB_dir = direction_just;
-    mcp.motA_spd = 100;
-    mcp.motB_spd = 100;
-    mcp.motorgo = true;
+void Move_Turn(float degrees) {
+  turn_requested = true;
+  turn_target = GetYaw() + degrees;
+}
+void Move_Forward(short duration, short speed) {
+  move_requested = 1;
+  move_end = millis() + duration;
+  move_speed = speed;
+}
+void Move_Back(short duration, short speed) {
+  move_requested = -1;
+  move_end = millis() + duration;
+  move_speed = speed;
+}
 
-    RunMotors(mcp);
+void Move_Process() {
+  MotorControlPacket mcp;
+  mcp.motA_dir = direction_void;
+  mcp.motB_dir = direction_void;
+  mcp.motA_spd = 0;
+  mcp.motB_spd = 0;
+  mcp.motorgo = false;
 
+  // take actions based on what's been set in this loop
+  if (turn_requested) {
+    float yawdue = round(turn_target - GetYaw());
+    short turnspeed = 100;
+    if (abs(yawdue) < 20) {
+      turnspeed = 50;
+    } else if (abs(yawdue) < 5) {
+      turnspeed = 20;
+    }
+    if (yawdue < 0) {
+      // spin left
+      mcp.motA_dir = direction_just;
+      mcp.motB_dir = direction_back;
+      mcp.motA_spd = turnspeed;
+      mcp.motB_spd = turnspeed;
+      mcp.motorgo = true;
+    } else if (yawdue == 0) {
+      turn_requested = false;
+    } else if (yawdue > 0) {
+      // spin right
+      mcp.motA_dir = direction_back;
+      mcp.motB_dir = direction_just;
+      mcp.motA_spd = turnspeed;
+      mcp.motB_spd = turnspeed;
+      mcp.motorgo = true;
+    }
+  } else if (move_requested > 0) {
+    if (millis() < move_end) {
+      mcp.motA_dir = direction_just;
+      mcp.motB_dir = direction_just;
+      mcp.motA_spd = move_speed;
+      mcp.motB_spd = move_speed;
+      mcp.motorgo = true;
+    } else {
+      move_requested = 0;
+    }
+  } else if (move_requested < 0) {
+    if (millis() < move_end) {
+      mcp.motA_dir = direction_back;
+      mcp.motB_dir = direction_back;
+      mcp.motA_spd = move_speed;
+      mcp.motB_spd = move_speed;
+      mcp.motorgo = true;
+    } else {
+      move_requested = 0;
+    }
   }
+  RunMotors(mcp);
+}
+
+void AutomaticMode() {
+  
+  /* 
+    Put custom automatic control code here.
+    Mind that it's running in a loop, so you will need to basically "check sensors, instruct robot" 
+    Consider reducing robot "jitter" by reducing your update frequency; you can do this with a loop that checks the current time against your last update (see the PPM logic in Operator control modes below)
+  */
+  
+  
+  unsigned int ultra = GetUltrasonic();
+  if (ultra > 20) {
+    Move_Forward(1000,3*ultra);
+  } else if (ultra < 10) {
+    Move_Turn(90);
+  }
+
+  // really need to treat more like a queue, with interrupts
+
+  // This will process all your movement (except STOP, which will happen immediately), so leave this call here
+  Move_Process();  
 }
 
 
@@ -221,7 +322,6 @@ void ApplicationFunctionSet::ApplicationFunctionSet_SensorDataUpdate(void)
       }
     }
   }
-
 }
 
 
@@ -489,7 +589,7 @@ void ApplicationFunctionSet::ApplicationFunctionSet_RadioControl(void) {
     // if timer expires, switch to operator mode
     unsigned long currentMillis = millis();
     if (currentMillis - automaticStartTime >= automaticRunTime) {
-      StopMotors();
+      Move_Stop();
       CurrentApplication.CurrentRobotState = Operator;
     } 
   } else if (CurrentApplication.CurrentRobotState == Operator) { // Operator (manual) control of bot
@@ -548,7 +648,7 @@ void ApplicationFunctionSet::ApplicationFunctionSet_KeyCommand(void)
         CurrentApplication.CurrentTeamColor = CRGB::Blue;
         break;
       default:
-        StopMotors();
+        Move_Stop();
         break;
     }
   }
