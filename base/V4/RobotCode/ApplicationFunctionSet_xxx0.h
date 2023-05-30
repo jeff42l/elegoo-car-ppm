@@ -1,10 +1,6 @@
 /*
- * @Author: ELEGOO
- * @Date: 2019-10-22 11:59:09
- * @LastEditTime: 2020-12-29 16:04:05
- * @LastEditors: Changhua
+ * @Author: ELEGOO original / Shields modified
  * @Description: Smart Robot Car V4.0
- * @FilePath: 
  */
 #ifndef _ApplicationFunctionSet_xxx0_H_
 #define _ApplicationFunctionSet_xxx0_H_
@@ -15,7 +11,6 @@ class ApplicationFunctionSet
 {
 public:
   void ApplicationFunctionSet_Init(void);
-  void ApplicationFunctionSet_Bootup(void);
   void ApplicationFunctionSet_RGB(void);
   void ApplicationFunctionSet_Expression(void);
   void ApplicationFunctionSet_Rocker(void);             //APP Rocker Control
