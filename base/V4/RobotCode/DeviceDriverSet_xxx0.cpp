@@ -383,7 +383,7 @@ void DeviceDriverSet_Servo::DeviceDriverSet_Servo_control(unsigned int Position_
 {
   myservo.attach(PIN_Servo_z);
   myservo.write(Position_angle);
-  delay_xxx(450);
+  delay_xxx(45); // original value was 450
   myservo.detach();
 }
 //Servo motor control:Servo motor number and position angle
@@ -401,7 +401,7 @@ void DeviceDriverSet_Servo::DeviceDriverSet_Servo_controls(uint8_t Servo, unsign
     }
     myservo.attach(PIN_Servo_z);
     myservo.write(10 * Position_angle);
-    delay_xxx(500);
+    delay_xxx(45); // original value was 500
   }
   if (Servo == 2 || Servo == 3) //Servo_y
   {
@@ -416,7 +416,7 @@ void DeviceDriverSet_Servo::DeviceDriverSet_Servo_controls(uint8_t Servo, unsign
     }
     myservo.attach(PIN_Servo_y);
     myservo.write(10 * Position_angle);
-    delay_xxx(500);
+    delay_xxx(45); // original value was 500
   }
   myservo.detach();
 }

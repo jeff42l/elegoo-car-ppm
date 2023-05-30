@@ -43,7 +43,7 @@ public:
 
 public:
 #define PIN_Key 2
-#define keyValue_Max 4
+#define keyValue_Max 2
 public:
   static uint8_t keyValue;
 };

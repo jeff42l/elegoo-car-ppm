@@ -3,8 +3,13 @@
  * @Description: Smart Robot Car V4.0
  */
 
-//TODO: add dead zone variable 
 
+/***** Build Options *****/
+/* Uncomment this to build with automatic mode enabled */
+//#define AUTOENABLED
+/* Uncomment this to enable servo use during operator mode */
+//#define SERVOENABLED
+/*************************/
 
 #include <avr/wdt.h>
 //#include <hardwareSerial.h>
@@ -12,14 +17,9 @@
 #include <string.h>
 #include "ApplicationFunctionSet_xxx0.h"
 #include "DeviceDriverSet_xxx0.h"
-
-#include "ArduinoJson-v6.11.1.h" //ArduinoJson
 #include "MPU6050_getdata.h"
-
 #include "ppm.h"
-
-#define _is_print 1
-#define _Test_print 0
+#include <ArduinoQueue.h>
 
 ApplicationFunctionSet Application_FunctionSet;
 
@@ -27,13 +27,11 @@ ApplicationFunctionSet Application_FunctionSet;
 MPU6050_getdata AppMPU6050getdata;
 DeviceDriverSet_RBGLED AppRBG_LED;
 DeviceDriverSet_Key AppKey;
-DeviceDriverSet_ITR20001 AppITR20001;
 DeviceDriverSet_Voltage AppVoltage;
-
 DeviceDriverSet_Motor AppMotor;
 DeviceDriverSet_ULTRASONIC AppULTRASONIC;
 DeviceDriverSet_Servo AppServo;
-DeviceDriverSet_IRrecv AppIRrecv;
+
 /*f(x) int */
 static boolean
 function_xxx(long x, long s, long e) //f(x)
@@ -52,26 +50,6 @@ delay_xxx(uint16_t _ms)
     delay(1);
   }
 }
-
-
-/*Mode Control List*/
-enum RobotState {
-  Standby,    /* Waiting to initiate automatic function */
-  Automatic,  /* In automated period */
-  Operator,   /* Operator is in control */
-};
-
-/*Application definition for maintaining current state, etc. */
-struct ApplicationState
-{
-  RobotState CurrentRobotState; 
-  unsigned long CurrentTeamColor;
-};
-ApplicationState CurrentApplication;
-
-/* support for automatic run time in game mode */
-const long automaticRunTime = 30000; // 30 second automatic mode
-unsigned long automaticStartTime = 0; // time that automatic mode started
 
 /* maximum speed value that can be sent to motor */
 #define motorMax 255 //PWM(Motor speed/Speed)
@@ -93,15 +71,32 @@ int pDir[4] = {direction_void,0,direction_void,0};
 #define LEFTROCK        7
 #define LEFTPOT         8
 
-// Motor control packet
-struct MotorControlPacket {
-  bool motA_dir; // Right side motor direction
-  bool motB_dir; // Left side motor direction
-  short motA_spd; // Right side motor speed (0-255 or as configured)
-  short motB_spd; // Left side motor speed (0-255 or as configured)
-  bool motorgo; // if false, stop, if true, process 
+
+/* Mode Control List */
+enum RobotState {
+  Standby,    /* Waiting to initiate automatic function */
+  Automatic,  /* In automated period */
+  Operator,   /* Operator is in control */
 };
 
+/* Application definition for maintaining current state, etc. */
+struct ApplicationState
+{
+  RobotState CurrentRobotState; 
+  unsigned long CurrentTeamColor;
+};
+ApplicationState CurrentApplication;
+
+/* Motor control packet */
+struct MotorControlPacket {
+  bool motA_dir = direction_void; // Right side motor direction
+  bool motB_dir = direction_void; // Left side motor direction
+  short motA_spd = 0; // Right side motor speed (0-255 or as configured)
+  short motB_spd = 0; // Left side motor speed (0-255 or as configured)
+  bool motorgo = false; // if false, stop, if true, process 
+};
+
+/* Initialization called from RobotCode.ino at startup time */
 void ApplicationFunctionSet::ApplicationFunctionSet_Init(void)
 {
   Serial.begin(9600);
@@ -125,7 +120,6 @@ void ApplicationFunctionSet::ApplicationFunctionSet_Init(void)
   AppULTRASONIC.DeviceDriverSet_ULTRASONIC_Init();
 
   // Accelerometer
-  // TODO: figure out what simple but useful things we could do with this unit
   bool res_error = true;
   res_error = AppMPU6050getdata.MPU6050_dveInit();
   AppMPU6050getdata.MPU6050_calibration();
@@ -138,13 +132,28 @@ void ApplicationFunctionSet::ApplicationFunctionSet_Init(void)
   ppm.begin(A0, false);
 }
 
+// gets current approximate yaw (angle on the z axis) based on relative position from where robot was powered up
+float GetYaw() {
+  float yawn;
+  if (!AppMPU6050getdata.MPU6050_dveGetEulerAngles(&yawn)) {
+    return yawn;
+  } else {
+    return 0;
+  }
+}
 
-// Used to turn to a specific angle based on accelerometer data
-bool turn_requested = false;
-float turn_target = 0; 
-unsigned long move_end = 0;
-short move_requested = 0;
-short move_speed = 0;
+// gets current raw value from the ultrasonic sensor
+unsigned int GetUltrasonic() {
+  unsigned int ultra;
+  AppULTRASONIC.DeviceDriverSet_ULTRASONIC_Get(&ultra); 
+  return ultra;
+}
+
+// Turns the servo - note that 0 is right, 180 is left, and 90 is center
+void Move_Servo(unsigned int angle) {
+  unsigned int servoint = constrain(angle,0,180);
+  AppServo.DeviceDriverSet_Servo_control(servoint);
+}
 
 // Runs the motors as directed by the passed packet
 void RunMotors(MotorControlPacket mcp) {
@@ -167,130 +176,186 @@ void RunMotors(MotorControlPacket mcp) {
   }
 }
 
-float GetYaw() {
-  float yawn;
-  if (!AppMPU6050getdata.MPU6050_dveGetEulerAngles(&yawn)) {
-    return yawn;
-  } else {
-    return 0;
+
+#ifdef AUTOENABLED
+
+  /* support for automatic run time in game mode */
+  const long automaticRunTime = 30000; // 30 second automatic mode
+  unsigned long automaticStartTime = 0; // time that automatic mode started
+
+  // Control packet for automatic movement queuing
+  struct AutomovePacket {
+    short turndegrees = 0; // degrees to turn (negative values counterclockwise, positive clockwise)
+    short speed = 0; // max speed to move (around 10 at minimum usuable to motorMax)
+    short duration = 0; // duration to move (time in milliseconds)
+    short direction = 0; // direction to move (-1 is back, 1 is forward)
+  }; 
+
+  // queue to manage movement requests
+  ArduinoQueue<AutomovePacket> AutomoveQ(100);
+
+  // variables to carry current robot movement state when in automatic mode
+  bool turn_inprogress = false;
+  float turn_target = 0; 
+  unsigned long move_end = 0;
+  short move_inprogress = 0;
+  short move_speed = 0;
+
+  // Stop all motors
+  void Move_Stop(bool clearall) {
+    if (clearall) {
+      // clear the queue
+      while (!AutomoveQ.isEmpty()) {
+        AutomoveQ.dequeue();
+      }
+    }
+    move_inprogress = 0;
+    turn_inprogress = false;
+
+    MotorControlPacket mcp; // default values are stop/zero
+    RunMotors(mcp);
   }
-}
-unsigned int GetUltrasonic() {
-  unsigned int ultra;
-  AppULTRASONIC.DeviceDriverSet_ULTRASONIC_Get(&ultra); 
-  return ultra;
-}
 
-// Stop all motors
-void Move_Stop() {
-  turn_requested = false;
-
-  MotorControlPacket mcp;
-  mcp.motA_dir = direction_void;
-  mcp.motB_dir = direction_void;
-  mcp.motA_spd = 0;
-  mcp.motB_spd = 0;
-  mcp.motorgo = false;
-
-  RunMotors(mcp);
-}
-
-
-void Move_Turn(float degrees) {
-  turn_requested = true;
-  turn_target = GetYaw() + degrees;
-}
-void Move_Forward(short duration, short speed) {
-  move_requested = 1;
-  move_end = millis() + duration;
-  move_speed = speed;
-}
-void Move_Back(short duration, short speed) {
-  move_requested = -1;
-  move_end = millis() + duration;
-  move_speed = speed;
-}
-
-void Move_Process() {
-  MotorControlPacket mcp;
-  mcp.motA_dir = direction_void;
-  mcp.motB_dir = direction_void;
-  mcp.motA_spd = 0;
-  mcp.motB_spd = 0;
-  mcp.motorgo = false;
-
-  // take actions based on what's been set in this loop
-  if (turn_requested) {
-    float yawdue = round(turn_target - GetYaw());
-    short turnspeed = 100;
-    if (abs(yawdue) < 20) {
-      turnspeed = 50;
-    } else if (abs(yawdue) < 5) {
-      turnspeed = 20;
+  // Turns the robot, tries to hit the specified relative angle
+  void Move_Turn(float degrees) {
+    AutomovePacket amp;
+    float target = GetYaw() + degrees;
+    if (target > 360) {
+      target = target - 360;
     }
-    if (yawdue < 0) {
-      // spin left
-      mcp.motA_dir = direction_just;
-      mcp.motB_dir = direction_back;
-      mcp.motA_spd = turnspeed;
-      mcp.motB_spd = turnspeed;
-      mcp.motorgo = true;
-    } else if (yawdue == 0) {
-      turn_requested = false;
-    } else if (yawdue > 0) {
-      // spin right
-      mcp.motA_dir = direction_back;
-      mcp.motB_dir = direction_just;
-      mcp.motA_spd = turnspeed;
-      mcp.motB_spd = turnspeed;
-      mcp.motorgo = true;
+    amp.turndegrees = target;
+    AutomoveQ.enqueue(amp);
+  }
+  // Drive forward for the requested duration at the requested speed
+  void Move_Forward(short duration, short speed) {
+    AutomovePacket amp;
+    amp.direction = 1;
+    amp.duration = duration;
+    amp.speed = speed;
+    AutomoveQ.enqueue(amp);
+  }
+  // Drive backward for the requested duration at the requested speed
+  void Move_Back(short duration, short speed) {
+    AutomovePacket amp;
+    amp.direction = -1;
+    amp.duration = duration;
+    amp.speed = speed;
+    AutomoveQ.enqueue(amp);
+  }
+
+  void Move_Process() {
+    if (!move_inprogress && !turn_inprogress && !AutomoveQ.isEmpty()) {
+      // process next movement packet
+      AutomovePacket amp = AutomoveQ.dequeue();
+      if (abs(amp.turndegrees) > 0) {
+        turn_inprogress = true;
+        turn_target = round(GetYaw() + amp.turndegrees);
+      } else if (amp.direction != 0 && amp.duration > 0) {
+        move_inprogress = amp.direction;
+        move_end = millis() + amp.duration;
+        move_speed = amp.speed;
+      }
     }
-  } else if (move_requested > 0) {
-    if (millis() < move_end) {
-      mcp.motA_dir = direction_just;
-      mcp.motB_dir = direction_just;
-      mcp.motA_spd = move_speed;
-      mcp.motB_spd = move_speed;
-      mcp.motorgo = true;
+    
+    MotorControlPacket mcp;
+
+    // take actions based on what's been set in this loop
+    if (turn_inprogress) {
+      float curyaw = GetYaw();
+      float yawdue = round(turn_target - curyaw);
+      short turnspeed = 50;
+      short fudge = 5;
+
+      Serial.print("turning, yaw is ");
+      Serial.print(curyaw);
+      Serial.print(" with target of ");
+      Serial.print(turn_target);
+      Serial.print(" and calculated due ");
+      Serial.println(yawdue);
+
+      if (abs(yawdue) < 30) {
+        turnspeed = 25;
+      } else if (abs(yawdue) < 10) {
+        turnspeed = 12;
+      }
+
+      if (yawdue < -fudge) {
+        // spin left
+        mcp.motA_dir = direction_just;
+        mcp.motB_dir = direction_back;
+        mcp.motA_spd = turnspeed;
+        mcp.motB_spd = turnspeed;
+        mcp.motorgo = true;
+      } else if (abs(yawdue) < fudge) {
+        turn_inprogress = false;
+      } else if (yawdue > fudge) {
+        // spin right
+        mcp.motA_dir = direction_back;
+        mcp.motB_dir = direction_just;
+        mcp.motA_spd = turnspeed;
+        mcp.motB_spd = turnspeed;
+        mcp.motorgo = true;
+      }
+    } else if (move_inprogress > 0) {
+      if (millis() < move_end) {
+        mcp.motA_dir = direction_just;
+        mcp.motB_dir = direction_just;
+        mcp.motA_spd = move_speed;
+        mcp.motB_spd = move_speed;
+        mcp.motorgo = true;
+      } else {
+        move_inprogress = 0;
+      }
+    } else if (move_inprogress < 0) {
+      if (millis() < move_end) {
+        mcp.motA_dir = direction_back;
+        mcp.motB_dir = direction_back;
+        mcp.motA_spd = move_speed;
+        mcp.motB_spd = move_speed;
+        mcp.motorgo = true;
+      } else {
+        move_inprogress = 0;
+      }
+    }
+    RunMotors(mcp);
+  }
+
+  // Called in processing loop to drive automatically
+  void AutomaticMode() {
+    
+    /* 
+      Put custom automatic control code here.
+      Mind that it's running in a loop, so you will need to basically "check sensors, instruct robot" 
+      Consider reducing robot "jitter" by reducing your update frequency; you can do this with a loop that checks the current time against your last update (see the PPM logic in Operator control modes below)
+    */
+    
+    // This block of code is a poor implementation of collision avoidance
+    unsigned int ultra = GetUltrasonic();
+    if (ultra > 22) {
+      if (turn_inprogress) {
+        Move_Stop(true);
+        Move_Servo(90);
+      }
+      Move_Forward(1000,100);
     } else {
-      move_requested = 0;
+      if (move_inprogress != 0) {
+        Move_Stop(true);
+      }
+      Move_Turn(90);
+      Move_Servo(180);
     }
-  } else if (move_requested < 0) {
-    if (millis() < move_end) {
-      mcp.motA_dir = direction_back;
-      mcp.motB_dir = direction_back;
-      mcp.motA_spd = move_speed;
-      mcp.motB_spd = move_speed;
-      mcp.motorgo = true;
-    } else {
-      move_requested = 0;
-    }
+
+    // This will process all your movement (except STOP, which will happen immediately), so leave this call here
+    Move_Process();  
   }
-  RunMotors(mcp);
-}
+#endif
 
-void AutomaticMode() {
-  
-  /* 
-    Put custom automatic control code here.
-    Mind that it's running in a loop, so you will need to basically "check sensors, instruct robot" 
-    Consider reducing robot "jitter" by reducing your update frequency; you can do this with a loop that checks the current time against your last update (see the PPM logic in Operator control modes below)
-  */
-  
-  
-  unsigned int ultra = GetUltrasonic();
-  if (ultra > 20) {
-    Move_Forward(1000,3*ultra);
-  } else if (ultra < 10) {
-    Move_Turn(90);
+#ifndef AUTOENABLED
+  void Move_Stop(bool clearall) {
+    MotorControlPacket mcp; // default values are stop/zero
+    RunMotors(mcp);
   }
-
-  // really need to treat more like a queue, with interrupts
-
-  // This will process all your movement (except STOP, which will happen immediately), so leave this call here
-  Move_Process();  
-}
-
+#endif
 
 /*
   Check any other sensors needed to determine robot health
@@ -425,12 +490,9 @@ void ApplicationFunctionSet::ApplicationFunctionSet_RGB(void)
         break;
       case /* constant-expression */ Automatic:
         {
-
           // blink in team color
-          //TODO: investigate whether this actually holds the processor
           AppRBG_LED.DeviceDriverSet_RBGLED_xxx(50 /*Duration*/, 2 /*Traversal_Number*/, CurrentApplication.CurrentTeamColor);
           AppRBG_LED.DeviceDriverSet_RBGLED_xxx(50 /*Duration*/, 2 /*Traversal_Number*/, CRGB::Black);
-        
         }
         break;
       case /* constant-expression */ Operator:
@@ -469,8 +531,21 @@ MotorControlPacket OperatorControl_Arcade() {
   Serial.print(throttle);
   Serial.print(") steer(");
   Serial.print(steer);
-  Serial.println(") ");
+  Serial.println(") servo1(");
+  Serial.println(servo1);
+  Serial.println(")");
   */
+  
+  // This block of code puts the servo control on the left stick of the controller...
+  // HOWEVER - sending the command to the servo control -- AppServo.DeviceDriverSet_Servo_control(servoint) -- is a blocking call that will prevent other actions from happening
+  // I've reduced the blocking delay to the bare minimum, which renders it usable; stock code had higher values, not sure why
+  #ifdef SERVOENABLED
+    short servo1 = ppm.read_channel(LEFTX);
+    float servoangle = 2000 - servo1; 
+    servoangle = servoangle / 1000 * 180;
+    unsigned int servoint = constrain(round(servoangle),0,180);
+    AppServo.DeviceDriverSet_Servo_control(servoint);
+  #endif
 
   if (forward || reverse || left || right) {
     mcp.motorgo = true;
@@ -563,36 +638,106 @@ MotorControlPacket OperatorControl_Tank() {
     mcp.motA_spd = adjusted_right;
   }
 
+  // This block of code puts the servo control on the left stick of the controller
+  #ifdef SERVOENABLED
+    short servo1 = ppm.read_channel(LEFTX);
+    float servoangle = 2000 - servo1; 
+    servoangle = servoangle / 1000 * 180;
+    unsigned int servoint = constrain(round(servoangle),0,180);
+    AppServo.DeviceDriverSet_Servo_control(servoint);
+  #endif
+
   return mcp;
 }
 
 
+#ifdef AUTOENABLED
+  // Radio control listener, handles processing for game mode
+  void ApplicationFunctionSet::ApplicationFunctionSet_RadioControl(void) {
+    if (CurrentApplication.CurrentRobotState == Standby) { // Standby mode, where robot is waiting for activation of automatic mode
+      // read every loop, looking for basically instantaneous activation
+      short click = ppm.read_channel(RIGHTMOM);
+      if (click > 1400) {
+        // set start time
+        automaticStartTime = millis();
 
-// Radio control listener, handles processing for game mode
-void ApplicationFunctionSet::ApplicationFunctionSet_RadioControl(void) {
-  if (CurrentApplication.CurrentRobotState == Standby) { // Standby mode, where robot is waiting for activation of automatic mode
-    // read every loop, looking for basically instantaneous activation
-    short click = ppm.read_channel(RIGHTMOM);
-    if (click > 1400) {
-      // set start time
-      automaticStartTime = millis();
+        // set robot state
+        CurrentApplication.CurrentRobotState = Automatic;
+      }
+    } else if (CurrentApplication.CurrentRobotState == Automatic) { // Automatic control of bot, no operator input
+      // run AutomaticMode() functions, which should be checking and acting
+      AutomaticMode();
 
-      // set robot state
-      CurrentApplication.CurrentRobotState = Automatic;
+      // allow stoppage by holding right button
+      short click = ppm.read_channel(RIGHTMOM);
+      if (click > 1400) {
+        Move_Stop(true);
+      }
+
+      // if timer expires, switch to operator mode
+      unsigned long currentMillis = millis();
+      if (currentMillis - automaticStartTime >= automaticRunTime) {
+        Move_Stop(true);
+        Move_Servo(90);
+        CurrentApplication.CurrentRobotState = Operator;
+      } 
+    } else if (CurrentApplication.CurrentRobotState == Operator) { // Operator (manual) control of bot
+      // Interval at which the PPM is updated
+      unsigned long currentMillis = millis();
+      if (currentMillis - PPMPreviousMillis >= PPMInterval) {
+        PPMPreviousMillis = currentMillis;
+
+        MotorControlPacket mcp;
+
+        short drivemode = ppm.read_channel(RIGHTROCK);
+        // Process remote controls
+        if (drivemode <= 1600) {
+          mcp = OperatorControl_Arcade();
+        } else {
+          mcp = OperatorControl_Tank();
+        }
+
+        RunMotors(mcp);
+      }
     }
-  } else if (CurrentApplication.CurrentRobotState == Automatic) { // Automatic control of bot, no operator input
-    // TODO: consider adding a "kill switch" option
+  }
 
-    // run AutomaticMode() functions, which should be checking and acting
-    AutomaticMode();
+  // Processes presses of the onboard momentary switch
+  void ApplicationFunctionSet::ApplicationFunctionSet_KeyCommand(void)
+  {
+    uint8_t get_keyValue;
+    static uint8_t temp_keyValue = keyValue_Max;
+    AppKey.DeviceDriverSet_key_Get(&get_keyValue);
+  
+    if (temp_keyValue != get_keyValue)
+    {
+      temp_keyValue = get_keyValue;
+      //Serial.println(get_keyValue);
+      switch (get_keyValue)
+      {
+        case 0: 
+          CurrentApplication.CurrentRobotState = Operator;
+          CurrentApplication.CurrentTeamColor = CRGB::Violet;
+          break;
+        case 1:
+          CurrentApplication.CurrentRobotState = Standby;
+          CurrentApplication.CurrentTeamColor = CRGB::Red;
+          break;
+        case 2:
+          CurrentApplication.CurrentRobotState = Standby;
+          CurrentApplication.CurrentTeamColor = CRGB::Blue;
+          break;
+        default:
+          break;
+      }
+      Move_Stop(true);
+    }
+  }
+#endif
 
-    // if timer expires, switch to operator mode
-    unsigned long currentMillis = millis();
-    if (currentMillis - automaticStartTime >= automaticRunTime) {
-      Move_Stop();
-      CurrentApplication.CurrentRobotState = Operator;
-    } 
-  } else if (CurrentApplication.CurrentRobotState == Operator) { // Operator (manual) control of bot
+#ifndef AUTOENABLED
+  // Radio control listener, handles processing for game mode
+  void ApplicationFunctionSet::ApplicationFunctionSet_RadioControl(void) {
     // Interval at which the PPM is updated
     unsigned long currentMillis = millis();
     if (currentMillis - PPMPreviousMillis >= PPMInterval) {
@@ -611,48 +756,39 @@ void ApplicationFunctionSet::ApplicationFunctionSet_RadioControl(void) {
       RunMotors(mcp);
     }
   }
-}
 
-
-// Processes presses of the onboard momentary switch
-void ApplicationFunctionSet::ApplicationFunctionSet_KeyCommand(void)
-{
-  uint8_t get_keyValue;
-  static uint8_t temp_keyValue = keyValue_Max;
-  AppKey.DeviceDriverSet_key_Get(&get_keyValue);
- 
-  if (temp_keyValue != get_keyValue)
+  // Processes presses of the onboard momentary switch
+  void ApplicationFunctionSet::ApplicationFunctionSet_KeyCommand(void)
   {
-    temp_keyValue = get_keyValue;
-    //Serial.println(get_keyValue);
-    switch (get_keyValue)
+    uint8_t get_keyValue;
+    static uint8_t temp_keyValue = keyValue_Max;
+    AppKey.DeviceDriverSet_key_Get(&get_keyValue);
+  
+    if (temp_keyValue != get_keyValue)
     {
-      case 0: 
-        CurrentApplication.CurrentRobotState = Operator;
-        CurrentApplication.CurrentTeamColor = CRGB::Violet;
-        break;
-      case 1:
-        CurrentApplication.CurrentRobotState = Standby;
-        CurrentApplication.CurrentTeamColor = CRGB::Red;
-        break;
-      case 2:
-        CurrentApplication.CurrentRobotState = Standby;
-        CurrentApplication.CurrentTeamColor = CRGB::Blue;
-        break;
-      case 3:
-        CurrentApplication.CurrentRobotState = Operator;
-        CurrentApplication.CurrentTeamColor = CRGB::Red;
-        break;
-      case 4:
-        CurrentApplication.CurrentRobotState = Operator;
-        CurrentApplication.CurrentTeamColor = CRGB::Blue;
-        break;
-      default:
-        Move_Stop();
-        break;
+      temp_keyValue = get_keyValue;
+      //Serial.println(get_keyValue);
+      switch (get_keyValue)
+      {
+        case 0: 
+          CurrentApplication.CurrentRobotState = Operator;
+          CurrentApplication.CurrentTeamColor = CRGB::Violet;
+          break;
+        case 1:
+          CurrentApplication.CurrentRobotState = Operator;
+          CurrentApplication.CurrentTeamColor = CRGB::Red;
+          break;
+        case 2:
+          CurrentApplication.CurrentRobotState = Operator;
+          CurrentApplication.CurrentTeamColor = CRGB::Blue;
+          break;
+        default:
+          break;
+      }
+      Move_Stop(true);
     }
   }
-}
+#endif
 
 /*Data analysis on serial port*/
 void ApplicationFunctionSet::ApplicationFunctionSet_SerialPortDataAnalysis(void)
