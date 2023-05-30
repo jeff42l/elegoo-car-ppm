@@ -19,7 +19,10 @@
 #include "DeviceDriverSet_xxx0.h"
 #include "MPU6050_getdata.h"
 #include "ppm.h"
+
+#ifdef AUTOENABLED
 #include <ArduinoQueue.h>
+#endif
 
 ApplicationFunctionSet Application_FunctionSet;
 
