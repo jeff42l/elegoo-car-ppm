@@ -226,10 +226,10 @@ void setup(void)
   pinMode(ENA, OUTPUT);
   pinMode(ENB, OUTPUT);
 
-  pinMode(A4, INPUT);
+  pinMode(2, INPUT);
 
   // start PPM traffic on pin A0 -- note if you have a non-standard-issue cable, you may need to adjust this pin value
-  ppm.begin(A4, false);
+  ppm.begin(2, false);
 }
 
 void loop(void)
