@@ -28,9 +28,13 @@ void loop()
   // control the onboard LED 
   Application_FunctionSet.ApplicationFunctionSet_RGB();
 
+  // Checks the stop signal to put bot into standby if appropriate IR signal is received
+  Application_FunctionSet.ApplicationFunctionSet_CheckStopSignal();
+
   // listen to a PPM-based controller if connected
   Application_FunctionSet.ApplicationFunctionSet_RadioControl();
 
+  
   // Use this if doing advanced work that requires analysis of sensor data, etc.
   //Application_FunctionSet.ApplicationFunctionSet_SerialPortDataAnalysis();
 

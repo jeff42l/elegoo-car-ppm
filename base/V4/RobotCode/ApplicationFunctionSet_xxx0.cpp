@@ -34,6 +34,7 @@ DeviceDriverSet_Voltage AppVoltage;
 DeviceDriverSet_Motor AppMotor;
 DeviceDriverSet_ULTRASONIC AppULTRASONIC;
 DeviceDriverSet_Servo AppServo;
+DeviceDriverSet_IRrecv AppIR;
 
 /*f(x) int */
 static boolean
@@ -126,6 +127,9 @@ void ApplicationFunctionSet::ApplicationFunctionSet_Init(void)
   bool res_error = true;
   res_error = AppMPU6050getdata.MPU6050_dveInit();
   AppMPU6050getdata.MPU6050_calibration();
+
+  // Infrared receiver
+  AppIR.DeviceDriverSet_IRrecv_Init();
 
   // initial state of robot
   CurrentApplication.CurrentRobotState = Standby;
@@ -741,22 +745,23 @@ MotorControlPacket OperatorControl_Tank() {
 #ifndef AUTOENABLED
   // Radio control listener, handles processing for game mode
   void ApplicationFunctionSet::ApplicationFunctionSet_RadioControl(void) {
-    // Interval at which the PPM is updated
-    unsigned long currentMillis = millis();
-    if (currentMillis - PPMPreviousMillis >= PPMInterval) {
-      PPMPreviousMillis = currentMillis;
-
-      MotorControlPacket mcp;
-
-      short drivemode = ppm.read_channel(RIGHTROCK);
-      // Process remote controls
-      if (drivemode <= 1600) {
-        mcp = OperatorControl_Arcade();
-      } else {
-        mcp = OperatorControl_Tank();
+    if (CurrentApplication.CurrentRobotState == Operator) {
+      // Interval at which the PPM is updated
+      unsigned long currentMillis = millis();
+      if (currentMillis - PPMPreviousMillis >= PPMInterval) {
+        MotorControlPacket mcp;
+        PPMPreviousMillis = currentMillis;
+        short drivemode = ppm.read_channel(RIGHTROCK);
+        // Process remote controls
+        if (drivemode <= 1600) {
+          mcp = OperatorControl_Arcade();
+        } else {
+          mcp = OperatorControl_Tank();
+        }
+        RunMotors(mcp);
       }
-
-      RunMotors(mcp);
+    } else {
+      Move_Stop(true); // will use default mcp, which stops
     }
   }
 
@@ -792,6 +797,18 @@ MotorControlPacket OperatorControl_Tank() {
     }
   }
 #endif
+
+
+// Checks the IR sensor for a stop signal (5, the OK button on the remote)
+void ApplicationFunctionSet::ApplicationFunctionSet_CheckStopSignal(void) {
+  uint8_t ir;
+  if (AppIR.DeviceDriverSet_IRrecv_Get(&ir) && ir == 5) {
+    CurrentApplication.CurrentRobotState = Standby;
+    
+    //Serial.print("Current IR value: ");
+    //Serial.println(ir);
+  }
+}
 
 /*Data analysis on serial port*/
 void ApplicationFunctionSet::ApplicationFunctionSet_SerialPortDataAnalysis(void)
