@@ -129,7 +129,7 @@ void ApplicationFunctionSet::ApplicationFunctionSet_Init(void)
   AppMPU6050getdata.MPU6050_calibration();
 
   // Infrared receiver
-  AppIR.DeviceDriverSet_IRrecv_Init();
+  //AppIR.DeviceDriverSet_IRrecv_Init();
 
   // initial state of robot
   CurrentApplication.CurrentRobotState = Standby;
