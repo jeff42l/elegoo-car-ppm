@@ -58,6 +58,13 @@ delay_xxx(uint16_t _ms)
 /* maximum speed value that can be sent to motor */
 #define motorMax 255 //PWM(Motor speed/Speed)
 
+/* Control dead zones */
+#define deadzone_Y 75
+#define deadzone_X 30
+
+/* minimum value the throttle knob will reduce speed to, valid values float 0.0-1.0 */
+#define throttleKnob_min 0.2
+
 /* support for PPM radio control */
 const long PPMInterval = 50;
 unsigned long PPMPreviousMillis = 0;
@@ -528,10 +535,10 @@ MotorControlPacket OperatorControl_Arcade() {
   short steer = ppm.read_channel(RIGHTX);
   short speedmax = ppm.read_channel(LEFTPOT);
 
-  bool reverse = throttle > 1525;
-  bool forward = throttle < 1475;
-  bool left = steer < 1470;
-  bool right = steer > 1530; 
+  bool reverse = throttle > 1500 + deadzone_Y;
+  bool forward = throttle < 1500 - deadzone_Y;
+  bool left = steer < 1500 - deadzone_X;
+  bool right = steer > 1500 + deadzone_X; 
 
   /*
   Serial.print("throttle(");
@@ -559,7 +566,7 @@ MotorControlPacket OperatorControl_Arcade() {
 
     // calculate proportional movement and max speed
     // values should center at 1500, low is 1000, high is 2000
-    float max_speed_percent = (speedmax - 1000) / 1000.0;
+    float max_speed_percent = constrain((speedmax - 1000) / 1000.0, throttleKnob_min, 1.0);
     short requested_throttle = abs(throttle - 1500);
     float throttle_percent = requested_throttle / 500.0;
     short adjusted_throttle = constrain(throttle_percent * max_speed_percent * motorMax, 0, motorMax);
@@ -621,20 +628,23 @@ MotorControlPacket OperatorControl_Tank() {
 
   short leftthrottle = ppm.read_channel(LEFTY);
   short rightthrottle = ppm.read_channel(RIGHTY);
+  short speedmax = ppm.read_channel(LEFTPOT);
+
+  float max_speed_percent = constrain((speedmax - 1000) / 1000.0, throttleKnob_min, 1.0);
 
   short requested_left = abs(leftthrottle - 1500);
-  short adjusted_left = constrain(((requested_left / 500.0) * motorMax), 0, motorMax);
+  short adjusted_left = constrain(((requested_left / 500.0) * motorMax * max_speed_percent), 0, motorMax);
   if (adjusted_left > 20) {
     mcp.motorgo = true;
-    if (leftthrottle < 1475) {
+    if (leftthrottle < (1500 - deadzone_Y)) {
       mcp.motB_dir = direction_just;
-    } else if (leftthrottle > 1525) {
+    } else if (leftthrottle > (1500 + deadzone_Y)) {
       mcp.motB_dir = direction_back;
     }        
     mcp.motB_spd = adjusted_left;
   }
   short requested_right = abs(rightthrottle - 1500);
-  short adjusted_right = constrain(((requested_right / 500.0) * motorMax), 0, motorMax);
+  short adjusted_right = constrain(((requested_right / 500.0) * motorMax * max_speed_percent), 0, motorMax);
   if (adjusted_right > 20) {
     mcp.motorgo = true;
     if (rightthrottle < 1475) {
