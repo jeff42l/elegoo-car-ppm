@@ -144,6 +144,8 @@ void ApplicationFunctionSet::ApplicationFunctionSet_Init(void)
   
   // start PPM traffic on pin A0 -- note if you have a non-standard-issue cable, you may need to adjust this pin value
   ppm.begin(A0, false);
+
+  AppMotor.DeviceDriverSet_Motor_control(direction_void, 0, direction_void, 0, false);
 }
 
 // gets current approximate yaw (angle on the z axis) based on relative position from where robot was powered up
@@ -762,11 +764,13 @@ MotorControlPacket OperatorControl_Tank() {
         MotorControlPacket mcp;
         PPMPreviousMillis = currentMillis;
         short drivemode = ppm.read_channel(RIGHTROCK);
-        // Process remote controls
-        if (drivemode <= 1600) {
-          mcp = OperatorControl_Arcade();
-        } else {
-          mcp = OperatorControl_Tank();
+        // Process remote controls; if read value is low, that means the controller isn't on/paired yet, so ignore inputs
+        if (drivemode > 800) {
+          if (drivemode <= 1600) {
+            mcp = OperatorControl_Arcade();
+          } else {
+            mcp = OperatorControl_Tank();
+          }
         }
         RunMotors(mcp);
       }
